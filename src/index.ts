@@ -31,4 +31,12 @@ registerConfigCommands(program)
 registerAuthCommands(program)
 registerCompletionCommands(program)
 
+program
+  .command('tui')
+  .description('Launch interactive terminal UI')
+  .action(async () => {
+    const { launchTui } = await import('./tui/index.js')
+    await launchTui(program.opts().serverUrl)
+  })
+
 program.parse()
