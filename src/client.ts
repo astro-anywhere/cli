@@ -216,7 +216,8 @@ export class AstroClient {
       })
       this.headers['Authorization'] = `Bearer ${data.accessToken}`
       return true
-    } catch {
+    } catch (err) {
+      console.error(`Token refresh failed: ${err instanceof Error ? err.message : String(err)}`)
       return false
     }
   }

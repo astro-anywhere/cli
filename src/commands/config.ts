@@ -69,6 +69,21 @@ export function registerConfigCommands(program: Command): void {
         return
       }
 
+      // Validate server URL format
+      if (resolved === 'serverUrl') {
+        try {
+          new URL(value)
+        } catch {
+          if (json) {
+            print({ error: `Invalid URL: "${value}"` }, { json: true })
+          } else {
+            console.error(chalk.red(`Invalid URL: "${value}"`))
+          }
+          process.exitCode = 1
+          return
+        }
+      }
+
       saveConfig({ [resolved]: value })
 
       if (json) {

@@ -29,7 +29,7 @@ export function saveConfig(updates: Partial<CliConfig>): void {
   mkdirSync(CONFIG_DIR, { recursive: true })
   const current = loadConfig()
   const merged = { ...current, ...updates }
-  writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2) + '\n')
+  writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 })
 }
 
 export function clearAuth(): void {
@@ -37,12 +37,12 @@ export function clearAuth(): void {
   delete current.authToken
   delete current.refreshToken
   mkdirSync(CONFIG_DIR, { recursive: true })
-  writeFileSync(CONFIG_FILE, JSON.stringify(current, null, 2) + '\n')
+  writeFileSync(CONFIG_FILE, JSON.stringify(current, null, 2) + '\n', { mode: 0o600 })
 }
 
 export function resetConfig(): void {
   mkdirSync(CONFIG_DIR, { recursive: true })
-  writeFileSync(CONFIG_FILE, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }, null, 2) + '\n')
+  writeFileSync(CONFIG_FILE, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }, null, 2) + '\n', { mode: 0o600 })
 }
 
 export function getServerUrl(cliOverride?: string): string {

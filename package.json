@@ -7,7 +7,9 @@
     "astro-cli": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {
@@ -37,7 +39,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "license": "MIT",
+  "license": "BSL-1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/astro-anywhere/cli.git"
