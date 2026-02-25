@@ -8,8 +8,7 @@ export default defineConfig({
   format: ['esm'],
   target: 'node18',
   clean: true,
-  banner: ({ entryPoint }) =>
-    entryPoint?.endsWith('index.ts')
-      ? { js: '#!/usr/bin/env node' }
-      : undefined,
+  banner: {
+    js: '#!/usr/bin/env node',
+  },
 })
