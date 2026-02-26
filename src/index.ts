@@ -15,7 +15,7 @@ const program = new Command()
 program
   .name('astro-cli')
   .description('CLI for managing Astro projects, plans, tasks, and environments')
-  .version('0.1.1')
+  .version('0.2.0')
   .option('--json', 'Machine-readable JSON output')
   .option('--quiet', 'Suppress spinners and decorative output')
   .option('--server-url <url>', 'Override server URL')
