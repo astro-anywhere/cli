@@ -1,8 +1,9 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
-import { getClient, streamDispatchToStdout } from '../client.js'
+import { getClient, streamDispatchToStdout, streamChatToStdout } from '../client.js'
 import type { PlanNode } from '../client.js'
 import { print, formatRelativeTime, formatStatus, parseDateFilter, formatDuration, type ColumnDef } from '../output.js'
+import { loadHistory, saveHistory, createApprovalHandler } from '../chat-utils.js'
 
 export function registerTaskCommands(program: Command): void {
   const cmd = program.command('task').description('Manage tasks')
@@ -243,25 +244,185 @@ export function registerTaskCommands(program: Command): void {
     .description('Dispatch a task for execution')
     .requiredOption('--project-id <id>', 'Project ID')
     .option('--force', 'Force re-dispatch even if already running')
-    .action(async (nodeId: string, opts: { projectId: string; force?: boolean }) => {
+    .option('--machine <id>', 'Target machine ID')
+    .option('--model <model>', 'AI model to use')
+    .option('--provider <provider>', 'Preferred provider ID')
+    .option('--yolo', 'Auto-approve all approval requests')
+    .option('--slurm', 'Dispatch to Slurm cluster')
+    .option('--slurm-partition <p>', 'Slurm partition')
+    .option('--slurm-gpus <n>', 'Number of GPUs', parseInt)
+    .option('--slurm-gpu-type <t>', 'GPU type (e.g. a100, v100)')
+    .option('--slurm-mem <m>', 'Memory (e.g. 16G, 64G)')
+    .option('--slurm-time <t>', 'Time limit (e.g. 1:00:00)')
+    .option('--slurm-nodes <n>', 'Number of nodes', parseInt)
+    .option('--slurm-cpus <n>', 'CPUs per task', parseInt)
+    .option('--slurm-qos <q>', 'Quality of service')
+    .option('--slurm-account <a>', 'Slurm account')
+    .option('--slurm-modules <m>', 'Comma-separated modules to load')
+    .option('--cluster <id>', 'Target Slurm cluster ID')
+    .action(async (nodeId: string, opts: {
+      projectId: string; force?: boolean; machine?: string
+      model?: string; provider?: string; yolo?: boolean
+      slurm?: boolean; slurmPartition?: string; slurmGpus?: number
+      slurmGpuType?: string; slurmMem?: string; slurmTime?: string
+      slurmNodes?: number; slurmCpus?: number; slurmQos?: string
+      slurmAccount?: string; slurmModules?: string; cluster?: string
+    }) => {
       const client = getClient(program.opts().serverUrl)
+      const isJson = program.opts().json
 
       console.log(chalk.dim(`Dispatching task ${chalk.bold(nodeId)} to server...`))
       console.log()
 
       try {
-        // Send minimal payload — server resolves title, description,
-        // working directory, dependencies, and vision doc from the DB.
+        // Slurm dispatch path
+        if (opts.slurm) {
+          const slurmConfig: Record<string, unknown> = {}
+          if (opts.slurmPartition) slurmConfig.partition = opts.slurmPartition
+          if (opts.slurmNodes) slurmConfig.nodes = opts.slurmNodes
+          if (opts.slurmCpus) slurmConfig.cpusPerTask = opts.slurmCpus
+          if (opts.slurmMem) slurmConfig.mem = opts.slurmMem
+          if (opts.slurmTime) slurmConfig.time = opts.slurmTime
+          if (opts.slurmQos) slurmConfig.qos = opts.slurmQos
+          if (opts.slurmAccount) slurmConfig.account = opts.slurmAccount
+          if (opts.slurmModules) slurmConfig.modules = opts.slurmModules.split(',').map(s => s.trim())
+          if (opts.slurmGpus || opts.slurmGpuType) {
+            slurmConfig.gpu = { count: opts.slurmGpus ?? 1, type: opts.slurmGpuType }
+          }
+
+          const response = await client.dispatchSlurmTask({
+            task: {
+              taskId: `exec-${nodeId}-${Date.now()}`,
+              projectId: opts.projectId,
+              nodeId,
+              title: nodeId,
+              preferredProvider: opts.provider,
+            },
+            targetClusterId: opts.cluster,
+            slurmConfig: Object.keys(slurmConfig).length > 0 ? slurmConfig as Parameters<typeof client.dispatchSlurmTask>[0]['slurmConfig'] : undefined,
+          })
+          await streamDispatchToStdout(response, { json: isJson })
+          console.log()
+          console.log(chalk.green('Slurm dispatch complete.'))
+          return
+        }
+
+        // Standard dispatch path
+        const approvalHandler = createApprovalHandler(client, !!opts.yolo)
+
         const response = await client.dispatchTask({
           nodeId,
           projectId: opts.projectId,
           force: opts.force,
+          targetMachineId: opts.machine,
+          model: opts.model,
+          preferredProvider: opts.provider,
         })
-        await streamDispatchToStdout(response)
+        await streamDispatchToStdout(response, {
+          json: isJson,
+          onApprovalRequest: approvalHandler,
+        })
         console.log()
         console.log(chalk.green('Task dispatch complete.'))
       } catch (err) {
         console.error(chalk.red(`Dispatch failed: ${err instanceof Error ? err.message : String(err)}`))
+        process.exitCode = 1
+      }
+    })
+
+  // ── task chat ────────────────────────────────────────────────────
+  cmd
+    .command('chat <nodeId>')
+    .description('Chat with AI about a specific task')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--message <msg>', 'Message to send')
+    .option('--session-id <sid>', 'Resume existing session')
+    .option('--model <model>', 'AI model to use')
+    .option('--provider <provider>', 'Provider ID')
+    .option('--history-file <path>', 'Path to conversation history JSON file')
+    .option('--yolo', 'Auto-approve all approval requests')
+    .action(async (nodeId: string, cmdOpts: {
+      projectId: string
+      message: string
+      sessionId?: string
+      model?: string
+      provider?: string
+      historyFile?: string
+      yolo?: boolean
+    }) => {
+      const client = getClient(program.opts().serverUrl)
+      const isJson = program.opts().json
+
+      // Find the task node
+      let node: PlanNode | undefined
+      try {
+        const { nodes } = await client.getPlan(cmdOpts.projectId)
+        node = nodes.find(n => n.id === nodeId && !n.deletedAt)
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exitCode = 1
+        return
+      }
+
+      if (!node) {
+        console.error(chalk.red(`Task not found: ${nodeId}`))
+        process.exitCode = 1
+        return
+      }
+
+      // Load project for vision doc
+      let visionDoc: string | undefined
+      try {
+        const project = await client.getProject(cmdOpts.projectId)
+        visionDoc = project.visionDoc || undefined
+      } catch {
+        // Vision doc is optional
+      }
+
+      // Load message history
+      let messages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+      if (cmdOpts.historyFile) {
+        messages = loadHistory(cmdOpts.historyFile)
+      }
+
+      try {
+        const response = await client.taskChat({
+          message: cmdOpts.message,
+          nodeId,
+          projectId: cmdOpts.projectId,
+          taskTitle: node.title,
+          taskDescription: node.description || undefined,
+          taskOutput: node.executionOutput || undefined,
+          visionDoc,
+          sessionId: cmdOpts.sessionId,
+          model: cmdOpts.model,
+          providerId: cmdOpts.provider,
+          branchName: node.branchName || undefined,
+          prUrl: node.prUrl || undefined,
+          messages: messages.length > 0 ? messages : undefined,
+        })
+
+        const approvalHandler = createApprovalHandler(client, !!cmdOpts.yolo)
+
+        const result = await streamChatToStdout(response, {
+          json: isJson,
+          onApprovalRequest: approvalHandler,
+        })
+
+        if (result.sessionId) {
+          process.stderr.write(`\n${chalk.dim(`Session: ${result.sessionId}`)}\n`)
+        }
+
+        // Save history
+        if (cmdOpts.historyFile && result.assistantText) {
+          messages.push({ role: 'user', content: cmdOpts.message })
+          messages.push({ role: 'assistant', content: result.assistantText })
+          saveHistory(cmdOpts.historyFile, messages)
+        }
+
+        console.log() // Final newline
+      } catch (err) {
+        console.error(chalk.red(`Chat failed: ${err instanceof Error ? err.message : String(err)}`))
         process.exitCode = 1
       }
     })
@@ -366,9 +527,11 @@ export function registerTaskCommands(program: Command): void {
   cmd
     .command('watch <executionId>')
     .description('Watch real-time output from a running task via SSE')
-    .action(async (executionId: string) => {
+    .option('--yolo', 'Auto-approve all approval requests')
+    .action(async (executionId: string, cmdOpts: { yolo?: boolean }) => {
       const client = getClient(program.opts().serverUrl)
       const isJson = program.opts().json
+      const approvalHandler = createApprovalHandler(client, !!cmdOpts.yolo)
 
       try {
         const response = await client.streamEvents()
@@ -431,6 +594,17 @@ export function registerTaskCommands(program: Command): void {
                 case 'task:stdout':
                   process.stdout.write(event.data ?? '')
                   break
+                case 'task:approval_request': {
+                  const result = await approvalHandler({
+                    requestId: (event as Record<string, unknown>).requestId as string,
+                    question: (event as Record<string, unknown>).question as string,
+                    options: (event as Record<string, unknown>).options as string[],
+                    machineId: (event as Record<string, unknown>).machineId as string | undefined,
+                    taskId: (event as Record<string, unknown>).taskId as string | undefined,
+                  })
+                  void result
+                  break
+                }
               }
             } catch {
               // Skip non-JSON data lines

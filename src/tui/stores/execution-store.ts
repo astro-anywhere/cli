@@ -16,10 +16,20 @@ export interface ExecutionOutput {
   pendingToolCount: number
 }
 
+export interface PendingApproval {
+  requestId: string
+  question: string
+  options: string[]
+  machineId?: string
+  taskId?: string
+}
+
 export interface ExecutionState {
   outputs: Map<string, ExecutionOutput>
   /** Currently watched execution ID (shown in output panel) */
   watchingId: string | null
+  /** Pending approval request (shown as modal overlay) */
+  pendingApproval: PendingApproval | null
 }
 
 export interface ExecutionActions {
@@ -30,6 +40,7 @@ export interface ExecutionActions {
   initExecution: (executionId: string, nodeId: string) => void
   setStatus: (executionId: string, status: string) => void
   setWatching: (executionId: string | null) => void
+  setPendingApproval: (approval: PendingApproval | null) => void
   clear: (executionId: string) => void
 }
 
@@ -53,6 +64,7 @@ function trimRingBuffer(lines: string[]): string[] {
 export const useExecutionStore = create<ExecutionState & ExecutionActions>((set, get) => ({
   outputs: new Map(),
   watchingId: null,
+  pendingApproval: null,
 
   initExecution: (executionId, nodeId) => {
     const { outputs } = get()
@@ -142,6 +154,8 @@ export const useExecutionStore = create<ExecutionState & ExecutionActions>((set,
   },
 
   setWatching: (watchingId) => set({ watchingId }),
+
+  setPendingApproval: (pendingApproval) => set({ pendingApproval }),
 
   clear: (executionId) => {
     const { outputs } = get()

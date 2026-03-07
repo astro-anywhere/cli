@@ -8,12 +8,17 @@ import { ProjectsPanel } from '../panels/projects-panel.js'
 import { PlanPanel } from '../panels/plan-panel.js'
 import { MachinesPanel } from '../panels/machines-panel.js'
 import { OutputPanel } from '../panels/output-panel.js'
+import { ChatPanel } from '../panels/chat-panel.js'
 import { DetailOverlay } from '../panels/detail-overlay.js'
+import { ApprovalDialog } from '../shared/approval-dialog.js'
 import { useTuiStore } from '../../stores/tui-store.js'
+import { useExecutionStore } from '../../stores/execution-store.js'
 
 export function MainLayout() {
   const showHelp = useTuiStore((s) => s.showHelp)
   const showDetail = useTuiStore((s) => s.showDetail)
+  const showChat = useTuiStore((s) => s.showChat)
+  const pendingApproval = useExecutionStore((s) => s.pendingApproval)
   const { stdout } = useStdout()
 
   // Calculate dimensions
@@ -43,6 +48,24 @@ export function MainLayout() {
     )
   }
 
+  // Approval dialog overlay
+  const approvalOverlay = pendingApproval ? (
+    <Box position="absolute" marginTop={4} marginLeft={Math.floor(termWidth / 4)}>
+      <ApprovalDialog
+        question={pendingApproval.question}
+        options={pendingApproval.options}
+        onSelect={(index) => {
+          // Approval response is handled by the command system
+          useExecutionStore.getState().setPendingApproval(null)
+          void index
+        }}
+        onDismiss={() => {
+          useExecutionStore.getState().setPendingApproval(null)
+        }}
+      />
+    </Box>
+  ) : null
+
   return (
     <Box flexDirection="column" width={termWidth} height={termHeight}>
       {/* Status bar */}
@@ -58,18 +81,25 @@ export function MainLayout() {
         </Box>
       </Box>
 
-      {/* Bottom row: Machines + Output */}
+      {/* Bottom row: Machines + Output/Chat */}
       <Box flexDirection="row" height={bottomRowHeight}>
         <Box width="30%">
           <MachinesPanel height={bottomRowHeight} />
         </Box>
         <Box flexGrow={1}>
-          <OutputPanel height={bottomRowHeight} />
+          {showChat ? (
+            <ChatPanel height={bottomRowHeight} />
+          ) : (
+            <OutputPanel height={bottomRowHeight} />
+          )}
         </Box>
       </Box>
 
       {/* Search overlay (floats over panels) */}
       <SearchOverlay />
+
+      {/* Approval dialog overlay */}
+      {approvalOverlay}
 
       {/* Command line */}
       <CommandLine />

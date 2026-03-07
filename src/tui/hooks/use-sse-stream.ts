@@ -116,6 +116,17 @@ export function useSSEStream(client: AstroClient) {
           break
         }
 
+        case 'task:approval_request': {
+          useExecutionStore.getState().setPendingApproval({
+            requestId: event.data.requestId as string,
+            question: event.data.question as string,
+            options: event.data.options as string[],
+            machineId: event.data.machineId as string | undefined,
+            taskId: event.data.taskId as string | undefined,
+          })
+          break
+        }
+
         case 'heartbeat':
           // Keep-alive, no action needed
           break

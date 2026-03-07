@@ -3,42 +3,40 @@ import { Box, Text } from 'ink'
 
 const KEYBINDINGS = [
   ['Navigation', [
-    ['j / \u2193', 'Move down'],
-    ['k / \u2191', 'Move up'],
-    ['h / \u2190', 'Focus left panel'],
-    ['l / \u2192', 'Focus right panel'],
+    ['↑ / k', 'Move up'],
+    ['↓ / j', 'Move down'],
+    ['← / h', 'Focus left panel'],
+    ['→ / l', 'Focus right panel'],
     ['Tab', 'Cycle panel focus'],
-    ['1-4', 'Jump to panel'],
-    ['gg', 'Scroll to top'],
-    ['G', 'Scroll to bottom'],
-    ['Ctrl+u', 'Page up'],
-    ['Ctrl+d', 'Page down'],
-    ['Enter', 'Select / expand'],
+    ['1-5', 'Jump to panel'],
+    ['PgUp / PgDn', 'Page up / down'],
+    ['Home / End', 'Scroll to top / bottom'],
+    ['Enter / Space', 'Select / expand'],
   ]],
-  ['Actions', [
-    ['d', 'Dispatch selected task'],
-    ['c', 'Cancel running task'],
-    ['r', 'Refresh all data'],
-    ['q', 'Quit'],
-  ]],
-  ['Modes', [
-    [':', 'Command mode'],
-    ['/', 'Search mode'],
-    ['i', 'Insert mode (steer)'],
+  ['Shortcuts', [
+    ['Ctrl+P / :', 'Open command palette'],
+    ['Ctrl+F / /', 'Open search'],
+    ['Ctrl+R', 'Refresh all data'],
     ['?', 'Toggle this help'],
-    ['Esc', 'Return to normal mode'],
+    ['q / Ctrl+C', 'Quit'],
+    ['Esc', 'Close overlay / cancel input'],
   ]],
-  ['Commands', [
-    [':project list/create/delete', 'Project management'],
-    [':plan tree/create-node', 'Plan operations'],
-    [':dispatch <nodeId>', 'Dispatch task'],
-    [':cancel <execId>', 'Cancel execution'],
-    [':steer <message>', 'Steer running task'],
-    [':watch <execId>', 'Watch execution output'],
-    [':env list/status', 'Machine management'],
-    [':activity', 'Activity feed'],
-    [':refresh / :r', 'Force refresh'],
-    [':quit / :q', 'Exit TUI'],
+  ['Commands (via Ctrl+P)', [
+    ['project list / create / delete', 'Project management'],
+    ['plan tree / create-node', 'Plan operations'],
+    ['dispatch <nodeId>', 'Dispatch task for execution'],
+    ['cancel <execId>', 'Cancel execution'],
+    ['steer <message>', 'Steer running task'],
+    ['watch <execId>', 'Watch execution output'],
+    ['env list / status', 'Machine management'],
+    ['activity', 'Show activity feed'],
+    ['refresh / r', 'Force refresh'],
+    ['quit / q', 'Exit TUI'],
+  ]],
+  ['Terminal Compatibility', [
+    ['tmux', 'Ctrl+B prefix is not captured — safe'],
+    ['screen', 'Ctrl+A prefix is not captured — safe'],
+    ['vscode', 'All bindings work in integrated terminal'],
   ]],
 ] as const
 
@@ -58,7 +56,7 @@ export function HelpOverlay() {
           <Text bold underline>{section as string}</Text>
           {(bindings as ReadonlyArray<readonly [string, string]>).map(([key, desc]) => (
             <Box key={key} gap={2}>
-              <Text color="cyan">{(key as string).padEnd(28)}</Text>
+              <Text color="cyan">{(key as string).padEnd(34)}</Text>
               <Text>{desc as string}</Text>
             </Box>
           ))}

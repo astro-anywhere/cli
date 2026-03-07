@@ -4,9 +4,9 @@
 import { create } from 'zustand'
 import type { VimMode } from '../lib/vim-state-machine.js'
 
-export type PanelId = 'projects' | 'plan' | 'machines' | 'output'
+export type PanelId = 'projects' | 'plan' | 'machines' | 'output' | 'chat'
 
-const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output']
+const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output', 'chat']
 
 export interface TuiState {
   // Vim mode
@@ -32,6 +32,7 @@ export interface TuiState {
   showHelp: boolean
   showSearch: boolean
   showDetail: boolean
+  showChat: boolean
   detailType: 'project' | 'node' | 'machine' | 'execution' | null
   detailId: string | null
 
@@ -69,6 +70,7 @@ export interface TuiActions {
 
   toggleHelp: () => void
   toggleSearch: () => void
+  toggleChat: () => void
   openDetail: (type: 'project' | 'node' | 'machine' | 'execution', id: string) => void
   closeDetail: () => void
   closeOverlays: () => void
@@ -93,11 +95,12 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   selectedMachineId: null,
   selectedExecutionId: null,
 
-  scrollIndex: { projects: 0, plan: 0, machines: 0, output: 0 },
+  scrollIndex: { projects: 0, plan: 0, machines: 0, output: 0, chat: 0 },
 
   showHelp: false,
   showSearch: false,
   showDetail: false,
+  showChat: false,
   detailType: null,
   detailId: null,
 
@@ -182,9 +185,10 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
 
   toggleHelp: () => set((s) => ({ showHelp: !s.showHelp, showSearch: false })),
   toggleSearch: () => set((s) => ({ showSearch: !s.showSearch, showHelp: false })),
+  toggleChat: () => set((s) => ({ showChat: !s.showChat })),
   openDetail: (type, id) => set({ showDetail: true, detailType: type, detailId: id, showHelp: false, showSearch: false }),
   closeDetail: () => set({ showDetail: false, detailType: null, detailId: null }),
-  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, detailType: null, detailId: null }),
+  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, showChat: false, detailType: null, detailId: null }),
 
   setConnected: (connected) => set({ connected }),
   setMachineCount: (machineCount) => set({ machineCount }),

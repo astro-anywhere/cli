@@ -498,6 +498,13 @@ export class AstroClient {
     projectId: string
     force?: boolean
     targetMachineId?: string
+    isInteractivePlan?: boolean
+    model?: string
+    preferredProvider?: string
+    skipSafetyCheck?: boolean
+    title?: string
+    description?: string
+    deliveryMode?: string
     [key: string]: unknown
   }): Promise<Response> {
     const url = new URL('/api/dispatch/task', this.baseUrl)
@@ -512,18 +519,122 @@ export class AstroClient {
     }
     return res
   }
+
+  // ── Chat (SSE streaming) ──────────────────────────────────────────
+
+  async projectChat(payload: {
+    message: string; sessionId?: string; streamId?: string
+    projectId: string; model?: string; providerId?: string
+    visionDoc?: string; planNodes?: unknown[]; planEdges?: unknown[]
+    selectedBackends?: string[]
+    messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+  }): Promise<Response> {
+    const url = new URL('/api/agent/project-chat', this.baseUrl)
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Project chat failed (${res.status}): ${text}`)
+    }
+    return res
+  }
+
+  async taskChat(payload: {
+    message: string; sessionId?: string; streamId?: string
+    nodeId: string; projectId: string; taskTitle: string
+    taskDescription?: string; taskOutput?: string; visionDoc?: string
+    model?: string; providerId?: string; selectedBackends?: string[]
+    messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+    branchName?: string; prUrl?: string
+  }): Promise<Response> {
+    const url = new URL('/api/agent/task-chat', this.baseUrl)
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Task chat failed (${res.status}): ${text}`)
+    }
+    return res
+  }
+
+  // ── Approval ───────────────────────────────────────────────────────
+
+  async sendApproval(payload: {
+    taskId: string; machineId: string; requestId: string
+    answered: boolean; answer?: string; message?: string
+  }): Promise<{ success: boolean }> {
+    return this.post('/api/dispatch/approval', payload)
+  }
+
+  // ── Slurm Dispatch ────────────────────────────────────────────────
+
+  async dispatchSlurmTask(payload: {
+    task: { taskId: string; projectId: string; nodeId: string; title: string; description?: string; preferredProvider?: string }
+    targetClusterId?: string
+    slurmConfig?: {
+      partition?: string; nodes?: number; cpusPerTask?: number; mem?: string; time?: string
+      gpu?: { type?: string; count: number }; qos?: string; account?: string; modules?: string[]
+    }
+  }): Promise<Response> {
+    const url = new URL('/api/relay/slurm/dispatch', this.baseUrl)
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Slurm dispatch failed (${res.status}): ${text}`)
+    }
+    return res
+  }
 }
 
-// ── SSE Stream Helper ──────────────────────────────────────────────
+// ── SSE Stream Types ──────────────────────────────────────────────
 
-/**
- * Stream SSE events from a dispatch response to stdout.
- */
-export async function streamDispatchToStdout(response: Response): Promise<void> {
-  if (!response.body) {
-    console.log('Task dispatched (no stream)')
-    return
+export interface ApprovalRequest {
+  requestId: string
+  question: string
+  options: string[]
+  machineId?: string
+  taskId?: string
+}
+
+export interface StreamResult {
+  sessionId?: string
+  metrics?: { durationMs?: number; inputTokens?: number; outputTokens?: number; totalCost?: number; model?: string }
+  assistantText?: string
+}
+
+export interface StreamOptions {
+  onApprovalRequest?: (data: ApprovalRequest) => Promise<{ answered: boolean; answer?: string }>
+  json?: boolean
+}
+
+// ── SSE line parser ───────────────────────────────────────────────
+
+function parseSSELines(buffer: string, lines: string[]): Array<Record<string, unknown>> {
+  const events: Array<Record<string, unknown>> = []
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      try {
+        events.push(JSON.parse(line.slice(6)) as Record<string, unknown>)
+      } catch {
+        // Skip non-JSON data lines
+      }
+    }
   }
+  return events
+}
+
+async function readSSEStream(response: Response, handler: (event: Record<string, unknown>) => Promise<void> | void): Promise<void> {
+  if (!response.body) return
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -537,33 +648,170 @@ export async function streamDispatchToStdout(response: Response): Promise<void> 
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const event = JSON.parse(line.slice(6)) as { type: string; content?: string; name?: string; status?: string; summary?: string; message?: string }
-          switch (event.type) {
-            case 'text':
-              process.stdout.write(event.content ?? '')
-              break
-            case 'tool_use':
-              console.log(`\n[tool] ${event.name}`)
-              break
-            case 'result':
-              console.log(`\n--- Result: ${event.status} ---`)
-              if (event.summary) console.log(event.summary)
-              break
-            case 'error':
-              console.error(`\nError: ${event.message}`)
-              break
-            case 'done':
-              break
-          }
-        } catch {
-          // Skip non-JSON data lines
-        }
-      }
+    for (const event of parseSSELines(buffer, lines)) {
+      await handler(event)
     }
   }
+}
+
+// ── SSE Stream Helper ──────────────────────────────────────────────
+
+/**
+ * Stream SSE events from a dispatch response to stdout.
+ */
+export async function streamDispatchToStdout(response: Response, opts?: StreamOptions): Promise<StreamResult> {
+  const result: StreamResult = {}
+
+  if (!response.body) {
+    console.log('Task dispatched (no stream)')
+    return result
+  }
+
+  await readSSEStream(response, async (event) => {
+    const type = event.type as string
+
+    if (opts?.json) {
+      console.log(JSON.stringify(event))
+      return
+    }
+
+    switch (type) {
+      case 'text':
+        process.stdout.write((event.content as string) ?? '')
+        break
+      case 'tool_use':
+        process.stderr.write(`\n[tool] ${event.name}\n`)
+        break
+      case 'tool_result':
+        break
+      case 'session_init':
+        result.sessionId = event.sessionId as string
+        break
+      case 'result':
+        console.log(`\n--- Result: ${event.status} ---`)
+        if (event.summary) console.log(event.summary as string)
+        if (event.durationMs || event.inputTokens || event.outputTokens || event.totalCost) {
+          result.metrics = {
+            durationMs: event.durationMs as number | undefined,
+            inputTokens: event.inputTokens as number | undefined,
+            outputTokens: event.outputTokens as number | undefined,
+            totalCost: event.totalCost as number | undefined,
+            model: event.model as string | undefined,
+          }
+        }
+        break
+      case 'plan_result':
+        console.log('\n--- Plan Generated ---')
+        console.log(JSON.stringify(event.plan ?? event, null, 2))
+        break
+      case 'approval_request':
+        if (opts?.onApprovalRequest) {
+          const approval = await opts.onApprovalRequest({
+            requestId: event.requestId as string,
+            question: event.question as string,
+            options: event.options as string[],
+            machineId: event.machineId as string | undefined,
+            taskId: event.taskId as string | undefined,
+          })
+          // Caller is responsible for sending the approval via client.sendApproval
+          void approval
+        } else {
+          process.stderr.write(`\n[approval] ${event.question}\n`)
+          process.stderr.write(`  Options: ${(event.options as string[]).join(', ')}\n`)
+        }
+        break
+      case 'error':
+        console.error(`\nError: ${event.message}`)
+        break
+      case 'done':
+      case 'heartbeat':
+        break
+    }
+  })
+
+  return result
+}
+
+/**
+ * Stream SSE events from a chat response to stdout.
+ */
+export async function streamChatToStdout(response: Response, opts?: StreamOptions): Promise<StreamResult> {
+  const result: StreamResult = {}
+  let assistantText = ''
+
+  if (!response.body) {
+    console.log('No stream received')
+    return result
+  }
+
+  await readSSEStream(response, async (event) => {
+    const type = event.type as string
+
+    if (opts?.json) {
+      console.log(JSON.stringify(event))
+      return
+    }
+
+    switch (type) {
+      case 'text':
+        const content = (event.content as string) ?? ''
+        process.stdout.write(content)
+        assistantText += content
+        break
+      case 'tool_use':
+        process.stderr.write(`\n[tool] ${event.name}\n`)
+        break
+      case 'tool_result':
+        break
+      case 'session_init':
+        result.sessionId = event.sessionId as string
+        break
+      case 'file_change':
+        process.stderr.write(`[file] ${event.action} ${event.path}\n`)
+        break
+      case 'compaction':
+        process.stderr.write(`[compaction] History compacted: ${event.originalCount} → ${event.compactedCount} messages\n`)
+        break
+      case 'plan_result':
+        console.log('\n--- Plan Generated ---')
+        console.log(JSON.stringify(event.plan ?? event, null, 2))
+        break
+      case 'approval_request':
+        if (opts?.onApprovalRequest) {
+          const approval = await opts.onApprovalRequest({
+            requestId: event.requestId as string,
+            question: event.question as string,
+            options: event.options as string[],
+            machineId: event.machineId as string | undefined,
+            taskId: event.taskId as string | undefined,
+          })
+          void approval
+        } else {
+          process.stderr.write(`\n[approval] ${event.question}\n`)
+          process.stderr.write(`  Options: ${(event.options as string[]).join(', ')}\n`)
+        }
+        break
+      case 'done':
+        if (event.durationMs || event.inputTokens || event.outputTokens || event.totalCost) {
+          result.metrics = {
+            durationMs: event.durationMs as number | undefined,
+            inputTokens: event.inputTokens as number | undefined,
+            outputTokens: event.outputTokens as number | undefined,
+            totalCost: event.totalCost as number | undefined,
+            model: event.model as string | undefined,
+          }
+        }
+        break
+      case 'error':
+        console.error(`\nError: ${event.message}`)
+        break
+      case 'heartbeat':
+        break
+    }
+  })
+
+  result.assistantText = assistantText
+  return result
 }
 
 // ── Singleton ───────────────────────────────────────────────────────

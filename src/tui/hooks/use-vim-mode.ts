@@ -1,6 +1,13 @@
 /**
- * Hook that connects Ink's useInput to the vim state machine.
+ * Hook that connects Ink's useInput to the input state machine.
  * Dispatches effects to TUI store actions.
+ *
+ * Keybinding design: htop/helm-style, tmux & vscode terminal compatible.
+ * - Arrow keys always navigate (no modal j/k requirement)
+ * - Ctrl+P opens command palette (like vscode; safe in tmux)
+ * - Ctrl+F opens search (safe in tmux; vscode uses it for find)
+ * - Tab cycles panels
+ * - No Ctrl+B (tmux prefix), no Ctrl+A (tmux/screen prefix)
  */
 import { useCallback, useRef } from 'react'
 import { useInput, useApp } from 'ink'
@@ -50,6 +57,10 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           callbacks.onSelect?.()
           break
 
+        case 'palette':
+          // Palette open is handled by mode change — no extra action needed
+          break
+
         case 'command':
           if (effect.value?.startsWith('__autocomplete__')) {
             // Autocomplete handled by command-line component
@@ -84,6 +95,10 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           store.toggleHelp()
           break
 
+        case 'chat':
+          store.toggleChat()
+          break
+
         case 'none':
           break
       }
@@ -105,22 +120,28 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
       return
     }
 
-    // Map Ink key to vim key string
+    // Map Ink key events to our key string format
+    // Arrow keys use named strings so the state machine can distinguish them
     let keyStr = input
     if (key.escape) keyStr = 'escape'
     else if (key.return) keyStr = 'return'
     else if (key.backspace || key.delete) keyStr = 'backspace'
     else if (key.tab) keyStr = 'tab'
-    else if (key.upArrow) keyStr = 'k'  // Map arrows to vim keys in normal mode
-    else if (key.downArrow) keyStr = 'j'
-    else if (key.leftArrow) keyStr = 'h'
-    else if (key.rightArrow) keyStr = 'l'
+    else if (key.upArrow) keyStr = 'up'
+    else if (key.downArrow) keyStr = 'down'
+    else if (key.leftArrow) keyStr = 'left'
+    else if (key.rightArrow) keyStr = 'right'
+    else if (key.pageUp) keyStr = 'pageup'
+    else if (key.pageDown) keyStr = 'pagedown'
+    else if (key.home) keyStr = 'home'
+    else if (key.end) keyStr = 'end'
 
     const [nextState, effect] = vimReducer(vimState.current, {
       type: 'key',
       key: keyStr,
       ctrl: key.ctrl,
       shift: key.shift,
+      meta: key.meta,
     })
 
     vimState.current = nextState
