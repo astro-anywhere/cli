@@ -1,7 +1,9 @@
 import React from 'react'
 import { Box, Text, useStdout } from 'ink'
 import { useTuiStore } from '../../stores/tui-store.js'
+import { useSearchStore } from '../../stores/search-store.js'
 import { getFilteredPaletteCommands } from '../../commands/palette-filter.js'
+import { getStatusColor } from '../../lib/status-colors.js'
 
 // htop-style shortcut bar items
 const SHORTCUTS = [
@@ -19,13 +21,89 @@ const SHORTCUTS = [
 
 const MAX_VISIBLE = 10
 
+const TYPE_LABELS: Record<string, { label: string; color: string }> = {
+  project: { label: 'proj', color: 'cyan' },
+  task: { label: 'task', color: 'yellow' },
+  machine: { label: 'env', color: 'green' },
+  execution: { label: 'exec', color: 'magenta' },
+}
+
 export function CommandLine() {
   const mode = useTuiStore((s) => s.mode)
   const commandBuffer = useTuiStore((s) => s.commandBuffer)
-  const searchQuery = useTuiStore((s) => s.searchQuery)
   const paletteIndex = useTuiStore((s) => s.paletteIndex)
+
+  const searchOpen = useSearchStore((s) => s.isOpen)
+  const searchQuery = useSearchStore((s) => s.query)
+  const searchResults = useSearchStore((s) => s.results)
+  const searchItems = useSearchStore((s) => s.items)
+  const searchIndex = useSearchStore((s) => s.selectedIndex)
+
   const { stdout } = useStdout()
   const termWidth = stdout?.columns ?? 80
+
+  // Search mode — inline palette-style dropdown
+  if (searchOpen) {
+    const displayList = searchQuery.length > 0 ? searchResults : searchItems
+    const visible = displayList.slice(0, MAX_VISIBLE)
+
+    return (
+      <Box flexDirection="column">
+        <Box
+          flexDirection="column"
+          borderStyle="single"
+          borderColor="cyan"
+          paddingX={1}
+          width={Math.min(70, termWidth - 4)}
+        >
+          {visible.length === 0 ? (
+            <Text dimColor>{searchQuery.length > 0 ? 'No results' : 'No items'}</Text>
+          ) : (
+            visible.map((item, i) => {
+              const isSelected = i === searchIndex
+              const typeInfo = TYPE_LABELS[item.type] ?? { label: item.type, color: 'white' }
+              return (
+                <Box key={`${item.type}-${item.id}`}>
+                  <Text
+                    inverse={isSelected}
+                    bold={isSelected}
+                    color={isSelected ? 'cyan' : undefined}
+                  >
+                    {isSelected ? ' > ' : '   '}
+                  </Text>
+                  <Text inverse={isSelected} color={isSelected ? 'cyan' : typeInfo.color}>
+                    [{typeInfo.label}]
+                  </Text>
+                  <Text inverse={isSelected} bold={isSelected}>
+                    {' '}{item.title}
+                  </Text>
+                  {item.status && (
+                    <Text
+                      inverse={isSelected}
+                      color={isSelected ? undefined : getStatusColor(item.status)}
+                      dimColor={!isSelected}
+                    >
+                      {' '}{item.status}
+                    </Text>
+                  )}
+                </Box>
+              )
+            })
+          )}
+          {displayList.length > MAX_VISIBLE && (
+            <Text dimColor>  ...and {displayList.length - MAX_VISIBLE} more</Text>
+          )}
+        </Box>
+
+        <Box paddingX={1}>
+          <Text bold color="cyan">/ </Text>
+          <Text>{searchQuery}</Text>
+          <Text color="cyan">{'\u2588'}</Text>
+          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to go, Esc to close)</Text>
+        </Box>
+      </Box>
+    )
+  }
 
   // Palette mode — show input + filtered command list
   if (mode === 'palette') {
@@ -34,7 +112,6 @@ export function CommandLine() {
 
     return (
       <Box flexDirection="column">
-        {/* Command list (above input) */}
         <Box
           flexDirection="column"
           borderStyle="single"
@@ -69,24 +146,12 @@ export function CommandLine() {
           )}
         </Box>
 
-        {/* Input line */}
         <Box paddingX={1}>
           <Text bold color="yellow">&gt; </Text>
           <Text>{commandBuffer}</Text>
           <Text color="cyan">{'\u2588'}</Text>
           <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to run, Esc to cancel)</Text>
         </Box>
-      </Box>
-    )
-  }
-
-  if (mode === 'search') {
-    return (
-      <Box paddingX={1}>
-        <Text bold color="green">/ </Text>
-        <Text>{searchQuery}</Text>
-        <Text color="cyan">{'\u2588'}</Text>
-        <Text dimColor>  (Enter to search, Esc to cancel)</Text>
       </Box>
     )
   }
