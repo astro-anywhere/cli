@@ -13,6 +13,7 @@ import { useCallback, useRef } from 'react'
 import { useInput, useApp } from 'ink'
 import { initialVimState, vimReducer, type VimState, type VimEffect } from '../lib/vim-state-machine.js'
 import { useTuiStore } from '../stores/tui-store.js'
+import { getFilteredPaletteCommands } from '../commands/palette-filter.js'
 
 export interface VimModeCallbacks {
   onCommand?: (command: string) => void
@@ -33,6 +34,17 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
     (effect: VimEffect) => {
       switch (effect.type) {
         case 'scroll':
+          // In palette mode, scroll navigates the palette list
+          if (vimState.current.mode === 'palette') {
+            const filtered = getFilteredPaletteCommands(vimState.current.commandBuffer)
+            const idx = store.paletteIndex
+            if (effect.direction === 'up') {
+              store.setPaletteIndex(Math.max(0, idx - 1))
+            } else if (effect.direction === 'down') {
+              store.setPaletteIndex(Math.min(filtered.length - 1, idx + 1))
+            }
+            break
+          }
           switch (effect.direction) {
             case 'up': store.scrollUp(); break
             case 'down': store.scrollDown(); break
@@ -53,16 +65,31 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           }
           break
 
-        case 'select':
-          callbacks.onSelect?.()
+        case 'select': {
+          const view = store.activeView
+          // In session views, Enter activates input mode
+          if (view === 'playground' || view === 'output') {
+            vimState.current = { ...vimState.current, mode: 'input' }
+            store.setMode('input')
+          } else {
+            callbacks.onSelect?.()
+          }
           break
+        }
 
         case 'palette':
           // Palette open is handled by mode change — no extra action needed
           break
 
         case 'command':
-          if (effect.value?.startsWith('__autocomplete__')) {
+          if (effect.value === '__palette_select__') {
+            // Select the highlighted palette command
+            const filtered = getFilteredPaletteCommands(vimState.current.commandBuffer)
+            const selected = filtered[store.paletteIndex]
+            if (selected) {
+              callbacks.onCommand?.(selected.name)
+            }
+          } else if (effect.value?.startsWith('__autocomplete__')) {
             // Autocomplete handled by command-line component
           } else if (effect.value) {
             callbacks.onCommand?.(effect.value)
@@ -89,6 +116,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
 
         case 'quit':
           exit()
+          setTimeout(() => process.exit(0), 100)
           break
 
         case 'help':
@@ -97,6 +125,12 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
 
         case 'chat':
           store.toggleChat()
+          break
+
+        case 'view':
+          if (effect.value === 'dashboard' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'output') {
+            store.setActiveView(effect.value)
+          }
           break
 
         case 'none':

@@ -333,6 +333,12 @@ export class AstroClient {
     return this.get('/api/data/file-changes', { executionId })
   }
 
+  // ── Usage / Cost ────────────────────────────────────────────────────
+
+  async getUsageHistory(weeks = 1): Promise<{ date: string; tasksCompleted: number; totalCostUsd: number }[]> {
+    return this.get('/api/data/usage/history', { weeks: String(weeks) })
+  }
+
   // ── Activity ────────────────────────────────────────────────────────
 
   async listActivities(params?: { projectId?: string; limit?: string }): Promise<ActivityEvent[]> {

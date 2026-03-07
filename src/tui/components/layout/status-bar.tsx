@@ -1,14 +1,13 @@
 import React from 'react'
 import { Box, Text } from 'ink'
-import { useTuiStore } from '../../stores/tui-store.js'
+import { useTuiStore, type ViewId } from '../../stores/tui-store.js'
 import { formatCost } from '../../lib/format.js'
 
-const PANEL_LABELS: Record<string, string> = {
-  projects: 'PROJECTS',
-  plan: 'PLAN',
-  machines: 'MACHINES',
-  output: 'OUTPUT',
-  chat: 'CHAT',
+const VIEW_LABELS: Record<ViewId, string> = {
+  dashboard: 'Dashboard',
+  projects: 'Projects',
+  playground: 'Playground',
+  output: 'Output',
 }
 
 export function StatusBar() {
@@ -16,7 +15,7 @@ export function StatusBar() {
   const machineCount = useTuiStore((s) => s.machineCount)
   const todayCost = useTuiStore((s) => s.todayCost)
   const lastError = useTuiStore((s) => s.lastError)
-  const focusedPanel = useTuiStore((s) => s.focusedPanel)
+  const activeView = useTuiStore((s) => s.activeView)
 
   return (
     <Box paddingX={1} justifyContent="space-between">
@@ -27,7 +26,7 @@ export function StatusBar() {
         </Text>
         <Text dimColor>{machineCount} machine{machineCount !== 1 ? 's' : ''}</Text>
         <Text dimColor>{formatCost(todayCost)}</Text>
-        <Text bold color="cyan">{PANEL_LABELS[focusedPanel] ?? focusedPanel}</Text>
+        <Text bold color="yellow">[{VIEW_LABELS[activeView]}]</Text>
       </Box>
       {lastError && (
         <Box>

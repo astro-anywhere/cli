@@ -10,6 +10,8 @@ import { useTuiStore } from './stores/tui-store.js'
 import { useProjectsStore } from './stores/projects-store.js'
 import { usePlanStore } from './stores/plan-store.js'
 import { useSearchStore } from './stores/search-store.js'
+import { useExecutionStore } from './stores/execution-store.js'
+import { useChatStore } from './stores/chat-store.js'
 
 interface AppProps {
   serverUrl?: string
@@ -44,18 +46,16 @@ export function App({ serverUrl }: AppProps) {
         break
       }
       case 'plan': {
-        const treeLines = usePlanStore.getState().treeLines
+        const nodes = usePlanStore.getState().nodes.filter((n) => !n.deletedAt)
         const idx = scrollIndex.plan
-        const line = treeLines[idx]
-        if (line) {
-          useTuiStore.getState().setSelectedNode(line.id)
-          // Toggle collapse if it has children
-          usePlanStore.getState().toggleCollapse(line.id)
+        const node = nodes[idx]
+        if (node) {
+          useTuiStore.getState().setSelectedNode(node.id)
+          useTuiStore.getState().openDetail('node', node.id)
         }
         break
       }
       case 'machines': {
-        // Could open detail view for selected machine
         break
       }
     }
@@ -79,6 +79,20 @@ export function App({ serverUrl }: AppProps) {
   )
 
   const onDispatch = useCallback(async () => {
+    const { focusedPanel, scrollIndex, selectedProjectId } = useTuiStore.getState()
+
+    // If focused on the plan panel, dispatch the highlighted node
+    if (focusedPanel === 'plan') {
+      const nodes = usePlanStore.getState().nodes.filter((n) => !n.deletedAt)
+      const node = nodes[scrollIndex.plan]
+      if (node && selectedProjectId) {
+        useTuiStore.getState().setSelectedNode(node.id)
+        await execute(`dispatch ${node.id}`)
+        return
+      }
+    }
+
+    // Fallback: dispatch selected node
     const nodeId = useTuiStore.getState().selectedNodeId
     const projectId = useTuiStore.getState().selectedProjectId
     if (nodeId && projectId) {
@@ -94,6 +108,89 @@ export function App({ serverUrl }: AppProps) {
     refreshAll()
   }, [refreshAll])
 
+  // Handle messages from the session panel (playground/plan-generate views)
+  const onSessionMessage = useCallback(async (message: string) => {
+    const { selectedProjectId, activeView } = useTuiStore.getState()
+    if (!selectedProjectId) {
+      useTuiStore.getState().setLastError('No project selected')
+      return
+    }
+
+    const watchingId = useExecutionStore.getState().watchingId
+    const sessionId = useChatStore.getState().sessionId
+    const messages = useChatStore.getState().messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    // If no active execution, start a new one via dispatch
+    if (!watchingId) {
+      if (activeView === 'playground') {
+        await execute(`playground ${message}`)
+      } else {
+        await execute(`plan generate ${message}`)
+      }
+      return
+    }
+
+    // Otherwise, send follow-up via project chat
+    try {
+      useChatStore.getState().setStreaming(true)
+
+      const response = await client.projectChat({
+        message,
+        sessionId: sessionId ?? undefined,
+        projectId: selectedProjectId,
+        messages,
+      })
+
+      if (!response.body) {
+        useChatStore.getState().setStreaming(false)
+        return
+      }
+
+      // Stream the response
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') continue
+
+          try {
+            const event = JSON.parse(data)
+            if (event.type === 'text' && event.text) {
+              useChatStore.getState().appendStream(event.text)
+              useExecutionStore.getState().appendText(watchingId, event.text)
+            } else if (event.type === 'session_init' && event.sessionId) {
+              useChatStore.getState().setSessionId(event.sessionId)
+            } else if (event.type === 'done') {
+              // Finalize
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+
+      useChatStore.getState().flushStream()
+      useChatStore.getState().setStreaming(false)
+    } catch (err) {
+      useChatStore.getState().setStreaming(false)
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  }, [client, execute])
+
   // Vim mode
   useVimMode({
     onSelect,
@@ -104,5 +201,5 @@ export function App({ serverUrl }: AppProps) {
     onRefresh,
   })
 
-  return <MainLayout />
+  return <MainLayout onSessionMessage={onSessionMessage} />
 }

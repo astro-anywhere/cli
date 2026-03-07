@@ -30,7 +30,7 @@ export type VimAction =
   | { type: 'submit_search' }
 
 export interface VimEffect {
-  type: 'navigate' | 'scroll' | 'select' | 'focus' | 'command' | 'search' | 'quit' | 'dispatch' | 'cancel' | 'refresh' | 'help' | 'palette' | 'chat' | 'none'
+  type: 'navigate' | 'scroll' | 'select' | 'focus' | 'command' | 'search' | 'quit' | 'dispatch' | 'cancel' | 'refresh' | 'help' | 'palette' | 'chat' | 'view' | 'none'
   direction?: 'up' | 'down' | 'left' | 'right' | 'top' | 'bottom' | 'page_up' | 'page_down'
   panel?: number
   value?: string
@@ -148,14 +148,14 @@ function handleNormalMode(
     // Tab cycles panels
     case 'tab': return [state, { type: 'focus', direction: 'right' }]
 
-    // Panel jump by number
-    case '1': return [state, { type: 'focus', panel: 0 }]
-    case '2': return [state, { type: 'focus', panel: 1 }]
-    case '3': return [state, { type: 'focus', panel: 2 }]
-    case '4': return [state, { type: 'focus', panel: 3 }]
-    case '5': return [state, { type: 'focus', panel: 4 }]
+    // View switch by number
+    case '1': return [state, { type: 'view', value: 'dashboard' }]
+    case '2': return [state, { type: 'view', value: 'projects' }]
+    case '3': return [state, { type: 'view', value: 'playground' }]
+    case '4': return [state, { type: 'view', value: 'output' }]
 
     // Function-key style shortcuts (single letter, no prefix needed)
+    case 'd': return [state, { type: 'dispatch' }]
     case 'q': return [state, { type: 'quit' }]
     case '?': return [state, { type: 'help' }]
     case '/': return [{ ...state, mode: 'search', searchQuery: '' }, { type: 'none' }]
@@ -170,9 +170,10 @@ function handleNormalMode(
 
 function handlePaletteMode(state: VimState, key: string): [VimState, VimEffect] {
   if (key === 'return') {
+    // Always use __palette_select__ — the hook resolves to the highlighted item
     return [
       { ...state, mode: 'normal' },
-      { type: 'command', value: state.commandBuffer },
+      { type: 'command', value: '__palette_select__' },
     ]
   }
   if (key === 'backspace' || key === 'delete') {
@@ -182,8 +183,15 @@ function handlePaletteMode(state: VimState, key: string): [VimState, VimEffect] 
     }
     return [{ ...state, commandBuffer: newBuffer }, { type: 'none' }]
   }
+  // Arrow keys navigate the palette list
+  if (key === 'up') {
+    return [state, { type: 'scroll', direction: 'up' }]
+  }
+  if (key === 'down') {
+    return [state, { type: 'scroll', direction: 'down' }]
+  }
   if (key === 'tab') {
-    return [state, { type: 'command', value: `__autocomplete__${state.commandBuffer}` }]
+    return [state, { type: 'scroll', direction: 'down' }]
   }
   if (key.length === 1) {
     return [{ ...state, commandBuffer: state.commandBuffer + key }, { type: 'none' }]

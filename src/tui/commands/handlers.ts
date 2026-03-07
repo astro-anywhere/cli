@@ -10,6 +10,36 @@ import { useExecutionStore } from '../stores/execution-store.js'
 
 export type CommandHandler = (args: string[], client: AstroClient) => Promise<void>
 
+export interface PaletteCommand {
+  name: string
+  description: string
+  usage?: string
+}
+
+/** Commands shown in the palette (user-facing, no aliases) */
+export const PALETTE_COMMANDS: PaletteCommand[] = [
+  { name: 'project list', description: 'List all projects' },
+  { name: 'project show', description: 'Show project details', usage: 'project show <id>' },
+  { name: 'project create', description: 'Create a new project', usage: 'project create <name>' },
+  { name: 'project delete', description: 'Delete a project', usage: 'project delete <id>' },
+  { name: 'plan tree', description: 'Show plan tree for selected project' },
+  { name: 'plan create-node', description: 'Create a plan node', usage: 'plan create-node <title>' },
+  { name: 'plan update-node', description: 'Update a plan node field', usage: 'plan update-node <id> <field> <value>' },
+  { name: 'dispatch', description: 'Dispatch selected task for execution', usage: 'dispatch [nodeId]' },
+  { name: 'cancel', description: 'Cancel running execution', usage: 'cancel [executionId]' },
+  { name: 'steer', description: 'Send guidance to running task', usage: 'steer <message>' },
+  { name: 'watch', description: 'Watch execution output', usage: 'watch <executionId>' },
+  { name: 'env list', description: 'List machines/environments' },
+  { name: 'env status', description: 'Show relay status' },
+  { name: 'search', description: 'Search projects and tasks', usage: 'search <query>' },
+  { name: 'activity', description: 'Show recent activity feed' },
+  { name: 'playground', description: 'Start a playground (Cloud Code) session', usage: 'playground <description>' },
+  { name: 'plan generate', description: 'Generate a plan using AI', usage: 'plan generate <description>' },
+  { name: 'refresh', description: 'Refresh all data' },
+  { name: 'help', description: 'Toggle keybinding reference' },
+  { name: 'quit', description: 'Exit the TUI' },
+]
+
 export const handlers: Record<string, CommandHandler> = {
   // ── Quit ──
   q: async () => {
@@ -263,6 +293,79 @@ export const handlers: Record<string, CommandHandler> = {
     }
   },
 
+  // ── Playground ──
+  playground: async (args, client) => {
+    const description = args.join(' ')
+    if (!description) {
+      useTuiStore.getState().setLastError('Usage: playground <description>')
+      return
+    }
+    const projectId = useTuiStore.getState().selectedProjectId
+    if (!projectId) {
+      useTuiStore.getState().setLastError('No project selected. Select a project first.')
+      return
+    }
+
+    const nodeId = `playground-${projectId}-${Date.now()}`
+
+    try {
+      const response = await client.dispatchTask({
+        nodeId,
+        projectId,
+        skipSafetyCheck: true,
+        description,
+        title: `Playground: ${description.slice(0, 50)}`,
+      })
+
+      useExecutionStore.getState().initExecution(nodeId, nodeId)
+      useExecutionStore.getState().setWatching(nodeId)
+      useTuiStore.getState().setActiveView('playground')
+
+      await streamExecution(nodeId, response)
+    } catch (err) {
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  // ── Plan Generate ──
+  'plan generate': async (args, client) => {
+    const description = args.join(' ')
+    if (!description) {
+      useTuiStore.getState().setLastError('Usage: plan generate <description>')
+      return
+    }
+    const projectId = useTuiStore.getState().selectedProjectId
+    if (!projectId) {
+      useTuiStore.getState().setLastError('No project selected. Select a project first.')
+      return
+    }
+
+    const nodeId = `plan-${projectId}`
+
+    try {
+      const response = await client.dispatchTask({
+        nodeId,
+        projectId,
+        isInteractivePlan: true,
+        description,
+      })
+
+      useExecutionStore.getState().initExecution(nodeId, nodeId)
+      useExecutionStore.getState().setWatching(nodeId)
+      useTuiStore.getState().setActiveView('playground')
+
+      await streamExecution(nodeId, response)
+
+      // After plan generation completes, refresh plan and go back to dashboard
+      useExecutionStore.getState().appendLine(nodeId, '[plan] Refreshing plan...')
+      const { nodes, edges } = await client.getPlan(projectId)
+      usePlanStore.getState().setPlan(projectId, nodes, edges)
+      useTuiStore.getState().setActiveView('dashboard')
+    } catch (err) {
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
   // ── Help ──
   help: async () => {
     useTuiStore.getState().toggleHelp()
@@ -270,6 +373,63 @@ export const handlers: Record<string, CommandHandler> = {
   '?': async () => {
     useTuiStore.getState().toggleHelp()
   },
+}
+
+/**
+ * Stream SSE response from a dispatch into the execution store output panel.
+ * Parses each SSE line and routes text/tool/file events to the execution store.
+ */
+async function streamExecution(executionId: string, response: Response): Promise<void> {
+  if (!response.body) return
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      try {
+        const event = JSON.parse(line.slice(6)) as Record<string, unknown>
+        const eventType = event.type as string
+        if (eventType === 'text') {
+          useExecutionStore.getState().appendText(executionId, (event.content ?? '') as string)
+        } else if (eventType === 'tool_use') {
+          useExecutionStore.getState().appendToolCall(executionId, (event.name ?? '') as string)
+        } else if (eventType === 'file_change') {
+          useExecutionStore.getState().appendFileChange(
+            executionId,
+            (event.path ?? '') as string,
+            (event.action ?? 'modified') as string,
+            event.linesAdded as number | undefined,
+            event.linesRemoved as number | undefined,
+          )
+        } else if (eventType === 'result' || eventType === 'done') {
+          useExecutionStore.getState().setStatus(executionId, (event.status ?? 'completed') as string)
+        } else if (eventType === 'error') {
+          useExecutionStore.getState().appendLine(executionId, `[error] ${event.message}`)
+          useExecutionStore.getState().setStatus(executionId, 'failure')
+        } else if (eventType === 'plan_result') {
+          useExecutionStore.getState().appendLine(executionId, '[plan] Plan generated successfully')
+        } else if (eventType === 'approval_request') {
+          useExecutionStore.getState().setPendingApproval({
+            requestId: event.requestId as string,
+            question: event.question as string,
+            options: event.options as string[],
+            machineId: event.machineId as string | undefined,
+            taskId: event.taskId as string | undefined,
+          })
+        }
+      } catch {
+        // Skip non-JSON
+      }
+    }
+  }
 }
 
 async function refreshAll(client: AstroClient) {

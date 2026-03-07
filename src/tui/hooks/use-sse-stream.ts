@@ -116,6 +116,23 @@ export function useSSEStream(client: AstroClient) {
           break
         }
 
+        case 'task:plan_result': {
+          const taskId = event.data.taskId as string
+          useExecutionStore.getState().appendLine(taskId, '[plan] Plan generated — refreshing...')
+          // Auto-refresh plan data
+          const projectId = (event.data.projectId ?? useTuiStore.getState().selectedProjectId) as string | null
+          if (projectId) {
+            // Defer refresh to avoid blocking SSE handler
+            setTimeout(async () => {
+              try {
+                const { nodes, edges } = await client.getPlan(projectId)
+                usePlanStore.getState().setPlan(projectId, nodes, edges)
+              } catch { /* ignore */ }
+            }, 500)
+          }
+          break
+        }
+
         case 'task:approval_request': {
           useExecutionStore.getState().setPendingApproval({
             requestId: event.data.requestId as string,

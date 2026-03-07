@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import type { VimMode } from '../lib/vim-state-machine.js'
 
 export type PanelId = 'projects' | 'plan' | 'machines' | 'output' | 'chat'
+export type ViewId = 'dashboard' | 'projects' | 'playground' | 'output'
 
 const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output', 'chat']
 
@@ -40,6 +41,12 @@ export interface TuiState {
   connected: boolean
   machineCount: number
   todayCost: number
+
+  // Active view
+  activeView: ViewId
+
+  // Palette selection index
+  paletteIndex: number
 
   // Error
   lastError: string | null
@@ -78,6 +85,8 @@ export interface TuiActions {
   setConnected: (v: boolean) => void
   setMachineCount: (n: number) => void
   setTodayCost: (n: number) => void
+  setActiveView: (view: ViewId) => void
+  setPaletteIndex: (idx: number) => void
   setLastError: (e: string | null) => void
 }
 
@@ -108,10 +117,14 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   machineCount: 0,
   todayCost: 0,
 
+  activeView: 'dashboard',
+
+  paletteIndex: 0,
+
   lastError: null,
 
   setMode: (mode) => set({ mode }),
-  setCommandBuffer: (commandBuffer) => set({ commandBuffer }),
+  setCommandBuffer: (commandBuffer) => set({ commandBuffer, paletteIndex: 0 }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setPendingKeys: (pendingKeys) => set({ pendingKeys }),
 
@@ -193,5 +206,7 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   setConnected: (connected) => set({ connected }),
   setMachineCount: (machineCount) => set({ machineCount }),
   setTodayCost: (todayCost) => set({ todayCost }),
+  setActiveView: (activeView) => set({ activeView }),
+  setPaletteIndex: (paletteIndex) => set({ paletteIndex }),
   setLastError: (lastError) => set({ lastError }),
 }))
