@@ -5,7 +5,6 @@ import { useSearchStore } from '../../stores/search-store.js'
 import { getFilteredPaletteCommands } from '../../commands/palette-filter.js'
 import { getStatusColor } from '../../lib/status-colors.js'
 
-// htop-style shortcut bar items
 const SHORTCUTS = [
   { key: '1', label: 'Dashboard' },
   { key: '2', label: 'Plan' },
@@ -19,8 +18,6 @@ const SHORTCUTS = [
   { key: 'q', label: 'Quit' },
 ] as const
 
-const MAX_VISIBLE = 10
-
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   project: { label: 'proj', color: 'cyan' },
   task: { label: 'task', color: 'yellow' },
@@ -28,7 +25,11 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   execution: { label: 'exec', color: 'magenta' },
 }
 
-export function CommandLine() {
+interface CommandLineProps {
+  height: number
+}
+
+export function CommandLine({ height }: CommandLineProps) {
   const mode = useTuiStore((s) => s.mode)
   const commandBuffer = useTuiStore((s) => s.commandBuffer)
   const paletteIndex = useTuiStore((s) => s.paletteIndex)
@@ -42,47 +43,45 @@ export function CommandLine() {
   const { stdout } = useStdout()
   const termWidth = stdout?.columns ?? 80
 
-  // Search mode — inline palette-style dropdown
+  // List height = total height minus 2 (input line + border)
+  const listHeight = Math.max(1, height - 3)
+
+  // Search panel — half-screen bottom panel
   if (searchOpen) {
     const displayList = searchQuery.length > 0 ? searchResults : searchItems
-    const visible = displayList.slice(0, MAX_VISIBLE)
+    const visible = displayList.slice(0, listHeight)
 
     return (
-      <Box flexDirection="column">
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor="cyan"
-          paddingX={1}
-          width={Math.min(70, termWidth - 4)}
-        >
+      <Box flexDirection="column" height={height} borderStyle="single" borderColor="cyan" paddingX={1}>
+        {/* Input line at top */}
+        <Box>
+          <Text bold color="cyan">/ </Text>
+          <Text>{searchQuery}</Text>
+          <Text color="cyan">{'\u2588'}</Text>
+          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to go, Esc to close)</Text>
+        </Box>
+
+        {/* Results list */}
+        <Box flexDirection="column" marginTop={1}>
           {visible.length === 0 ? (
-            <Text dimColor>{searchQuery.length > 0 ? 'No results' : 'No items'}</Text>
+            <Text dimColor>{searchQuery.length > 0 ? '  No results' : '  No items'}</Text>
           ) : (
             visible.map((item, i) => {
               const isSelected = i === searchIndex
               const typeInfo = TYPE_LABELS[item.type] ?? { label: item.type, color: 'white' }
               return (
                 <Box key={`${item.type}-${item.id}`}>
-                  <Text
-                    inverse={isSelected}
-                    bold={isSelected}
-                    color={isSelected ? 'cyan' : undefined}
-                  >
+                  <Text inverse={isSelected} bold={isSelected} color={isSelected ? 'cyan' : undefined}>
                     {isSelected ? ' > ' : '   '}
                   </Text>
                   <Text inverse={isSelected} color={isSelected ? 'cyan' : typeInfo.color}>
                     [{typeInfo.label}]
                   </Text>
-                  <Text inverse={isSelected} bold={isSelected}>
+                  <Text inverse={isSelected} bold={isSelected} wrap="truncate">
                     {' '}{item.title}
                   </Text>
                   {item.status && (
-                    <Text
-                      inverse={isSelected}
-                      color={isSelected ? undefined : getStatusColor(item.status)}
-                      dimColor={!isSelected}
-                    >
+                    <Text inverse={isSelected} color={isSelected ? undefined : getStatusColor(item.status)} dimColor={!isSelected}>
                       {' '}{item.status}
                     </Text>
                   )}
@@ -90,47 +89,39 @@ export function CommandLine() {
               )
             })
           )}
-          {displayList.length > MAX_VISIBLE && (
-            <Text dimColor>  ...and {displayList.length - MAX_VISIBLE} more</Text>
+          {displayList.length > listHeight && (
+            <Text dimColor>  ...and {displayList.length - listHeight} more</Text>
           )}
-        </Box>
-
-        <Box paddingX={1}>
-          <Text bold color="cyan">/ </Text>
-          <Text>{searchQuery}</Text>
-          <Text color="cyan">{'\u2588'}</Text>
-          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to go, Esc to close)</Text>
         </Box>
       </Box>
     )
   }
 
-  // Palette mode — show input + filtered command list
+  // Command palette — half-screen bottom panel
   if (mode === 'palette') {
     const filtered = getFilteredPaletteCommands(commandBuffer)
-    const visible = filtered.slice(0, MAX_VISIBLE)
+    const visible = filtered.slice(0, listHeight)
 
     return (
-      <Box flexDirection="column">
-        <Box
-          flexDirection="column"
-          borderStyle="single"
-          borderColor="yellow"
-          paddingX={1}
-          width={Math.min(60, termWidth - 4)}
-        >
+      <Box flexDirection="column" height={height} borderStyle="single" borderColor="yellow" paddingX={1}>
+        {/* Input line at top */}
+        <Box>
+          <Text bold color="yellow">&gt; </Text>
+          <Text>{commandBuffer}</Text>
+          <Text color="cyan">{'\u2588'}</Text>
+          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to run, Esc to cancel)</Text>
+        </Box>
+
+        {/* Command list */}
+        <Box flexDirection="column" marginTop={1}>
           {visible.length === 0 ? (
-            <Text dimColor>No matching commands</Text>
+            <Text dimColor>  No matching commands</Text>
           ) : (
             visible.map((cmd, i) => {
               const isSelected = i === paletteIndex
               return (
                 <Box key={cmd.name}>
-                  <Text
-                    inverse={isSelected}
-                    bold={isSelected}
-                    color={isSelected ? 'yellow' : undefined}
-                  >
+                  <Text inverse={isSelected} bold={isSelected} color={isSelected ? 'yellow' : undefined}>
                     {isSelected ? ' > ' : '   '}
                     {cmd.name.padEnd(20)}
                   </Text>
@@ -141,16 +132,9 @@ export function CommandLine() {
               )
             })
           )}
-          {filtered.length > MAX_VISIBLE && (
-            <Text dimColor>  ...and {filtered.length - MAX_VISIBLE} more</Text>
+          {filtered.length > listHeight && (
+            <Text dimColor>  ...and {filtered.length - listHeight} more</Text>
           )}
-        </Box>
-
-        <Box paddingX={1}>
-          <Text bold color="yellow">&gt; </Text>
-          <Text>{commandBuffer}</Text>
-          <Text color="cyan">{'\u2588'}</Text>
-          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to run, Esc to cancel)</Text>
         </Box>
       </Box>
     )
@@ -158,7 +142,7 @@ export function CommandLine() {
 
   if (mode === 'input') {
     return (
-      <Box paddingX={1}>
+      <Box paddingX={1} height={height}>
         <Text dimColor>Input active — press Esc to exit</Text>
       </Box>
     )
@@ -166,7 +150,7 @@ export function CommandLine() {
 
   // Normal mode — htop-style function key bar
   return (
-    <Box paddingX={1} gap={1}>
+    <Box paddingX={1} gap={1} height={height}>
       {SHORTCUTS.map(({ key, label }) => (
         <Box key={key}>
           <Text inverse bold>{` ${key} `}</Text>

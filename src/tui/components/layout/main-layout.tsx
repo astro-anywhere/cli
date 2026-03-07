@@ -13,6 +13,7 @@ import { SessionPanel } from '../panels/session-panel.js'
 import { DetailOverlay } from '../panels/detail-overlay.js'
 import { ApprovalDialog } from '../shared/approval-dialog.js'
 import { useTuiStore } from '../../stores/tui-store.js'
+import { useSearchStore } from '../../stores/search-store.js'
 import { useExecutionStore } from '../../stores/execution-store.js'
 
 interface MainLayoutProps {
@@ -24,21 +25,26 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
   const showDetail = useTuiStore((s) => s.showDetail)
   const showChat = useTuiStore((s) => s.showChat)
   const activeView = useTuiStore((s) => s.activeView)
+  const mode = useTuiStore((s) => s.mode)
+  const searchOpen = useSearchStore((s) => s.isOpen)
   const pendingApproval = useExecutionStore((s) => s.pendingApproval)
   const { stdout } = useStdout()
 
-  // Calculate dimensions
   const termHeight = stdout?.rows ?? 24
   const termWidth = stdout?.columns ?? 80
-  const contentHeight = termHeight - 4 // status bar + command line
 
-  // If an overlay is showing, render it instead of panels
+  // When search or palette is open, bottom panel takes half the screen
+  const panelOpen = searchOpen || mode === 'palette'
+  const bottomPanelHeight = panelOpen ? Math.floor(termHeight / 2) : 1
+  const contentHeight = termHeight - 2 - bottomPanelHeight // 1 for status bar, 1 for spacing
+
+  // Full-screen overlays
   if (showHelp) {
     return (
       <Box flexDirection="column" width={termWidth} height={termHeight}>
         <StatusBar />
         <HelpOverlay />
-        <CommandLine />
+        <CommandLine height={1} />
       </Box>
     )
   }
@@ -48,7 +54,7 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
       <Box flexDirection="column" width={termWidth} height={termHeight}>
         <StatusBar />
         <DetailOverlay />
-        <CommandLine />
+        <CommandLine height={1} />
       </Box>
     )
   }
@@ -115,7 +121,6 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
 
     content = (
       <>
-        {/* Top row: Projects + Plan */}
         <Box flexDirection="row" height={topRowHeight}>
           <Box width="30%">
             <ProjectsPanel height={topRowHeight} />
@@ -125,7 +130,6 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
           </Box>
         </Box>
 
-        {/* Bottom row: Machines + Output/Chat */}
         <Box flexDirection="row" height={bottomRowHeight}>
           <Box width="30%">
             <MachinesPanel height={bottomRowHeight} />
@@ -148,7 +152,7 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
       {content}
       <SearchOverlay />
       {approvalOverlay}
-      <CommandLine />
+      <CommandLine height={bottomPanelHeight} />
     </Box>
   )
 }
