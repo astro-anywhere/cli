@@ -10,10 +10,11 @@ const SHORTCUTS = [
   { key: '2', label: 'Plan' },
   { key: '3', label: 'Projects' },
   { key: '4', label: 'Playground' },
-  { key: '5', label: 'Output' },
+  { key: '5', label: 'Active' },
   { key: '/', label: 'Search' },
   { key: 'C-p', label: 'Commands' },
   { key: 'd', label: 'Dispatch' },
+  { key: 'x', label: 'Stop' },
   { key: '?', label: 'Help' },
   { key: 'q', label: 'Quit' },
 ] as const
@@ -142,8 +143,10 @@ export function CommandLine({ height }: CommandLineProps) {
 
   if (mode === 'input') {
     return (
-      <Box paddingX={1} height={height}>
-        <Text dimColor>Input active — press Esc to exit</Text>
+      <Box paddingX={1} gap={1} height={height}>
+        <Text dimColor>Input active</Text>
+        <Box><Text inverse bold>{' C-d '}</Text><Text>Stop</Text></Box>
+        <Box><Text inverse bold>{' Esc '}</Text><Text>Exit input</Text></Box>
       </Box>
     )
   }

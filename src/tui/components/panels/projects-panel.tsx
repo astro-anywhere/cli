@@ -1,21 +1,20 @@
-import React from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { Panel } from '../layout/panel.js'
 import { Spinner } from '../shared/spinner.js'
 import { useProjectsStore } from '../../stores/projects-store.js'
 import { useExecutionStore } from '../../stores/execution-store.js'
+import { usePlanStore } from '../../stores/plan-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
-import { formatRelativeTime, truncate } from '../../lib/format.js'
+import { formatRelativeTime, truncate, getVisibleProjects } from '../../lib/format.js'
+
+/** Node statuses where execution has finished */
+const TERMINAL_NODE_STATUSES = new Set([
+  'completed', 'auto_verified', 'awaiting_judgment', 'awaiting_approval', 'pruned',
+])
 
 interface ProjectsPanelProps {
   height: number
-}
-
-function statusSymbol(status: string): string {
-  if (status === 'running') return '\u25B6'
-  if (status === 'success') return '\u2713'
-  if (status === 'failure' || status === 'error') return '\u2717'
-  return '\u00B7'
 }
 
 export function ProjectsPanel({ height }: ProjectsPanelProps) {
@@ -25,41 +24,74 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
   const focusedPanel = useTuiStore((s) => s.focusedPanel)
   const scrollIndex = useTuiStore((s) => s.scrollIndex.projects)
   const selectedProjectId = useTuiStore((s) => s.selectedProjectId)
+
   const outputs = useExecutionStore((s) => s.outputs)
+  const planNodes = usePlanStore((s) => s.nodes)
 
   const isFocused = focusedPanel === 'projects'
   const visibleHeight = Math.max(1, height - 3)
 
-  // Collect plan gen and playground entries from execution store
-  const planGenEntries: { id: string; label: string; status: string }[] = []
-  const playgroundEntries: { id: string; label: string; status: string }[] = []
-  for (const [id, exec] of outputs) {
-    if (exec.nodeId.startsWith('plan-')) {
-      planGenEntries.push({ id, label: exec.nodeId, status: exec.status })
-    } else if (exec.nodeId.startsWith('playground-')) {
-      playgroundEntries.push({ id, label: exec.nodeId.replace(/^playground-/, '').slice(0, 30), status: exec.status })
+  // Compute which projects have running work (matches frontend sidebar logic)
+  const projectsWithRunning = useMemo(() => {
+    const running = new Set<string>()
+
+    // Running executions
+    for (const [, exec] of outputs) {
+      if (exec.status !== 'running' && exec.status !== 'pending' && exec.status !== 'dispatched') continue
+      // Extract projectId from nodeId patterns
+      const nodeId = exec.nodeId
+      if (nodeId.startsWith('plan-')) {
+        running.add(nodeId.replace(/^plan-/, '').replace(/-\d+$/, ''))
+      } else if (nodeId.startsWith('playground-')) {
+        const parts = nodeId.replace(/^playground-/, '').split('-')
+        parts.pop()
+        running.add(parts.join('-'))
+      } else if (nodeId.startsWith('chat-')) {
+        running.add(nodeId.replace(/^chat-(project-|task-)?/, '').replace(/-\d+$/, ''))
+      } else {
+        const node = planNodes.find((n) => n.id === nodeId)
+        if (node && !TERMINAL_NODE_STATUSES.has(node.status)) {
+          running.add(node.projectId)
+        }
+      }
+    }
+
+    // In-progress/dispatched nodes without execution records
+    for (const node of planNodes) {
+      if ((node.status === 'in_progress' || node.status === 'dispatched') && !node.deletedAt) {
+        running.add(node.projectId)
+      }
+    }
+
+    return running
+  }, [outputs, planNodes])
+
+  // Filter out playground projects, sort by updatedAt descending
+  const sorted = getVisibleProjects(projects)
+
+  const projectCount = sorted.length
+  const maxIndex = Math.max(0, projectCount - 1)
+  const cursor = projectCount === 0 ? 0 : Math.min(Math.max(0, scrollIndex), maxIndex)
+
+  // Sync store if scroll index drifted out of bounds
+  useEffect(() => {
+    if (projectCount > 0 && scrollIndex !== cursor) {
+      useTuiStore.setState((s) => ({
+        scrollIndex: { ...s.scrollIndex, projects: cursor },
+      }))
+    }
+  }, [scrollIndex, cursor, projectCount])
+
+  // Scroll window: keep cursor visible
+  let start = 0
+  if (projectCount > visibleHeight) {
+    if (cursor >= projectCount - visibleHeight) {
+      start = projectCount - visibleHeight
+    } else {
+      start = Math.max(0, cursor - Math.floor(visibleHeight / 2))
     }
   }
-
-  // Build flat list of rows for scrolling — projects are the selectable items
-  // Section headers and session entries are rendered below projects
-  const projectCount = projects.length
-
-  // Scroll window for projects
-  const clampedIndex = Math.min(scrollIndex, Math.max(0, projectCount - 1))
-
-  // Reserve lines for section headers/entries below projects
-  const sectionLineCount =
-    (planGenEntries.length > 0 ? 1 + planGenEntries.length : 0) +
-    (playgroundEntries.length > 0 ? 1 + playgroundEntries.length : 0)
-  const projectVisibleHeight = Math.max(1, visibleHeight - sectionLineCount)
-
-  // Scroll window
-  let start = 0
-  if (projectCount > projectVisibleHeight) {
-    start = Math.max(0, Math.min(clampedIndex - Math.floor(projectVisibleHeight / 2), projectCount - projectVisibleHeight))
-  }
-  const visibleProjects = projects.slice(start, start + projectVisibleHeight)
+  const visibleProjects = sorted.slice(start, start + visibleHeight)
 
   return (
     <Panel title="PROJECTS" isFocused={isFocused} height={height}>
@@ -69,13 +101,14 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
         <Text color="red">{error}</Text>
       ) : (
         <Box flexDirection="column">
-          {visibleProjects.length === 0 && planGenEntries.length === 0 && playgroundEntries.length === 0 && (
+          {visibleProjects.length === 0 && (
             <Text dimColor>  No projects yet</Text>
           )}
           {visibleProjects.map((p, i) => {
             const actualIndex = start + i
-            const isSelected = isFocused && clampedIndex === actualIndex
+            const isSelected = isFocused && cursor === actualIndex
             const isActive = p.id === selectedProjectId
+            const hasRunning = projectsWithRunning.has(p.id)
             return (
               <Box key={p.id}>
                 <Text
@@ -85,36 +118,15 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
                   wrap="truncate"
                 >
                   {isSelected ? ' > ' : '   '}
-                  {truncate(p.name, 30)}
+                  {hasRunning ? '\u25B6 ' : '  '}
+                  {truncate(p.name, 28)}
                 </Text>
                 <Text dimColor={!isSelected}> {formatRelativeTime(p.updatedAt)}</Text>
               </Box>
             )
           })}
-          {projectCount > projectVisibleHeight && (
-            <Text dimColor>  [{start + 1}-{Math.min(start + projectVisibleHeight, projectCount)}/{projectCount}]</Text>
-          )}
-
-          {planGenEntries.length > 0 && (
-            <>
-              <Text bold color="yellow"> Plan Generation</Text>
-              {planGenEntries.map((item) => (
-                <Text key={item.id} dimColor wrap="truncate">
-                  {'   '}{statusSymbol(item.status)} {truncate(item.label, 28)} {item.status}
-                </Text>
-              ))}
-            </>
-          )}
-
-          {playgroundEntries.length > 0 && (
-            <>
-              <Text bold color="green"> Playground</Text>
-              {playgroundEntries.map((item) => (
-                <Text key={item.id} dimColor wrap="truncate">
-                  {'   '}{statusSymbol(item.status)} {truncate(item.label, 28)} {item.status}
-                </Text>
-              ))}
-            </>
+          {projectCount > visibleHeight && (
+            <Text dimColor>  [{start + 1}-{Math.min(start + visibleHeight, projectCount)}/{projectCount}]</Text>
           )}
         </Box>
       )}

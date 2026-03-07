@@ -17,6 +17,21 @@ for (const key of Object.keys(handlers)) {
  * tries longest match first (e.g., "project list" before "project").
  */
 export async function executeCommand(input: string, client: AstroClient): Promise<void> {
+  // Handle "prefix:value" commands (e.g., "resume:<executionId>")
+  const colonIdx = input.indexOf(':')
+  if (colonIdx > 0) {
+    const prefix = input.slice(0, colonIdx)
+    const value = input.slice(colonIdx + 1)
+    if (handlers[prefix]) {
+      try {
+        await handlers[prefix]([value], client)
+      } catch (err) {
+        useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+  }
+
   const parts = input.split(/\s+/)
 
   // Try two-word command first (e.g., "project list")

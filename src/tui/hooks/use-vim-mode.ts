@@ -14,7 +14,11 @@ import { useInput, useApp } from 'ink'
 import { initialVimState, vimReducer, type VimState, type VimEffect } from '../lib/vim-state-machine.js'
 import { useTuiStore } from '../stores/tui-store.js'
 import { useSearchStore } from '../stores/search-store.js'
+import { useProjectsStore } from '../stores/projects-store.js'
+import { useMachinesStore } from '../stores/machines-store.js'
+import { useSessionSettingsStore } from '../stores/session-settings-store.js'
 import { getFilteredPaletteCommands } from '../commands/palette-filter.js'
+import { getVisibleProjects } from '../lib/format.js'
 
 export interface VimModeCallbacks {
   onCommand?: (command: string) => void
@@ -54,6 +58,15 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
             case 'page_up': store.pageUp(); break
             case 'page_down': store.pageDown(); break
           }
+          // Auto-select project on cursor move (like frontend sidebar click)
+          // Must use getState() to read the freshly-updated scroll index
+          if (store.focusedPanel === 'projects') {
+            const sorted = getVisibleProjects(useProjectsStore.getState().projects)
+            const idx = useTuiStore.getState().scrollIndex.projects
+            if (sorted[idx]) {
+              useTuiStore.getState().setSelectedProject(sorted[idx].id)
+            }
+          }
           break
 
         case 'focus':
@@ -69,7 +82,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
         case 'select': {
           const view = store.activeView
           // In session views, Enter activates input mode
-          if (view === 'playground' || view === 'plan-gen' || view === 'output') {
+          if (view === 'playground' || view === 'plan-gen' || view === 'active') {
             vimState.current = { ...vimState.current, mode: 'input' }
             store.setMode('input')
           } else {
@@ -88,7 +101,9 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
             const filtered = getFilteredPaletteCommands(vimState.current.commandBuffer)
             const selected = filtered[store.paletteIndex]
             if (selected) {
-              callbacks.onCommand?.(selected.name)
+              // Dynamic commands (like resume) use usage as the executable command
+              const cmd = selected.usage?.startsWith('resume:') ? selected.usage : selected.name
+              callbacks.onCommand?.(cmd)
             }
           } else if (effect.value?.startsWith('__autocomplete__')) {
             // Autocomplete handled by command-line component
@@ -127,7 +142,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           break
 
         case 'view':
-          if (effect.value === 'dashboard' || effect.value === 'plan-gen' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'output') {
+          if (effect.value === 'dashboard' || effect.value === 'plan-gen' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'active') {
             store.setActiveView(effect.value)
           }
           break
@@ -153,6 +168,76 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
         store.setPendingKeys('')
       }
       return
+    }
+
+    // ── Session settings navigation (playground / plan-gen) ──
+    // When in input mode on session views, intercept arrow keys for settings fields
+    const isSessionView = store.activeView === 'playground' || store.activeView === 'plan-gen'
+    if (isSessionView && vimState.current.mode === 'input') {
+      const settings = useSessionSettingsStore.getState()
+
+      if (key.escape) {
+        // Escape: close picker or unfocus field or exit input mode
+        if (settings.pickerOpen) {
+          settings.setPickerOpen(false)
+          return
+        }
+        if (settings.focusedField) {
+          settings.setFocusedField(null)
+          return
+        }
+        // Fall through to normal escape handling below
+      }
+
+      if (settings.pickerOpen && settings.focusedField === 'machine') {
+        // Machine picker is open — arrow keys select, Enter confirms
+        const machines = useMachinesStore.getState().machines.filter((m) => m.isConnected)
+        const currentIdx = machines.findIndex((m) => m.id === settings.machineId)
+        if (key.upArrow) {
+          const newIdx = Math.max(0, currentIdx - 1)
+          if (machines[newIdx]) settings.setMachine(machines[newIdx].id, machines[newIdx].name)
+          return
+        }
+        if (key.downArrow) {
+          const newIdx = Math.min(machines.length - 1, currentIdx + 1)
+          if (machines[newIdx]) settings.setMachine(machines[newIdx].id, machines[newIdx].name)
+          return
+        }
+        if (key.return) {
+          settings.setPickerOpen(false)
+          return
+        }
+        return
+      }
+
+      if (settings.pickerOpen && settings.focusedField === 'workdir') {
+        // Workdir editor is open — TextInput handles keys, only intercept escape
+        return
+      }
+
+      if (settings.focusedField) {
+        // A settings field is focused but picker is not open
+        if (key.return) {
+          settings.setPickerOpen(true)
+          return
+        }
+        if (key.leftArrow || key.rightArrow) {
+          settings.setFocusedField(settings.focusedField === 'machine' ? 'workdir' : 'machine')
+          return
+        }
+        if (key.downArrow) {
+          settings.setFocusedField(null)
+          return
+        }
+        if (key.upArrow) return // Already at top
+        // Fall through for other keys
+      }
+
+      if (!settings.focusedField && key.upArrow) {
+        // From input area, up arrow moves to settings bar
+        settings.setFocusedField('machine')
+        return
+      }
     }
 
     // Map Ink key events to our key string format

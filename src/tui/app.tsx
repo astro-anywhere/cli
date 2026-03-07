@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, useEffect } from 'react'
 import { MainLayout } from './components/layout/main-layout.js'
 import { AstroClient } from '../client.js'
 import { useVimMode } from './hooks/use-vim-mode.js'
@@ -9,9 +9,12 @@ import { useCommandParser } from './hooks/use-command-parser.js'
 import { useTuiStore } from './stores/tui-store.js'
 import { useProjectsStore } from './stores/projects-store.js'
 import { usePlanStore } from './stores/plan-store.js'
+import { getVisibleProjects } from './lib/format.js'
 import { useSearchStore } from './stores/search-store.js'
 import { useExecutionStore } from './stores/execution-store.js'
 import { useChatStore } from './stores/chat-store.js'
+import { useMachinesStore } from './stores/machines-store.js'
+import { useSessionSettingsStore } from './stores/session-settings-store.js'
 
 interface AppProps {
   serverUrl?: string
@@ -23,11 +26,25 @@ export function App({ serverUrl }: AppProps) {
   // Data loading
   const { refreshAll } = usePolling(client)
 
-  // SSE streaming
-  useSSEStream(client)
+  // SSE streaming — refresh data on reconnect to pick up browser changes
+  useSSEStream(client, refreshAll)
 
   // Fuzzy search
   useFuzzySearch()
+
+  // Auto-initialize session settings with first connected machine
+  const machines = useMachinesStore((s) => s.machines)
+  useEffect(() => {
+    const settings = useSessionSettingsStore.getState()
+    if (settings.machineId) return // Already initialized
+    const localPlatform = process.platform
+    const m =
+      machines.find((m) => m.isConnected && m.platform === localPlatform) ??
+      machines.find((m) => m.isConnected)
+    if (m) {
+      settings.init(m.id, m.name, process.cwd())
+    }
+  }, [machines])
 
   // Command parser
   const { execute } = useCommandParser(client)
@@ -38,7 +55,7 @@ export function App({ serverUrl }: AppProps) {
 
     switch (focusedPanel) {
       case 'projects': {
-        const projects = useProjectsStore.getState().projects
+        const projects = getVisibleProjects(useProjectsStore.getState().projects)
         const idx = scrollIndex.projects
         if (projects[idx]) {
           useTuiStore.getState().setSelectedProject(projects[idx].id)
@@ -110,22 +127,19 @@ export function App({ serverUrl }: AppProps) {
 
   // Handle messages from the session panel (playground/plan-generate views)
   const onSessionMessage = useCallback(async (message: string) => {
-    const { selectedProjectId, activeView } = useTuiStore.getState()
-    if (!selectedProjectId) {
-      useTuiStore.getState().setLastError('No project selected')
-      return
-    }
-
+    const { selectedProjectId, activeView, selectedNodeId } = useTuiStore.getState()
     const watchingId = useExecutionStore.getState().watchingId
-    const sessionId = useChatStore.getState().sessionId
-    const messages = useChatStore.getState().messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }))
 
     // If no active execution, start a new one via dispatch
     if (!watchingId) {
-      if (activeView === 'plan-gen') {
+      if (activeView === 'playground') {
+        // Playground creates its own project — no selection needed
+        await execute(`playground ${message}`)
+      } else if (activeView === 'plan-gen') {
+        if (!selectedProjectId) {
+          useTuiStore.getState().setLastError('No project selected for plan generation')
+          return
+        }
         await execute(`plan generate ${message}`)
       } else {
         await execute(`playground ${message}`)
@@ -133,63 +147,18 @@ export function App({ serverUrl }: AppProps) {
       return
     }
 
-    // Otherwise, send follow-up via project chat
-    try {
-      useChatStore.getState().setStreaming(true)
-
-      const response = await client.projectChat({
-        message,
-        sessionId: sessionId ?? undefined,
-        projectId: selectedProjectId,
-        messages,
-      })
-
-      if (!response.body) {
-        useChatStore.getState().setStreaming(false)
-        return
-      }
-
-      // Stream the response
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-
-          try {
-            const event = JSON.parse(data)
-            if (event.type === 'text' && event.text) {
-              useChatStore.getState().appendStream(event.text)
-              useExecutionStore.getState().appendText(watchingId, event.text)
-            } else if (event.type === 'session_init' && event.sessionId) {
-              useChatStore.getState().setSessionId(event.sessionId)
-            } else if (event.type === 'done') {
-              // Finalize
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
-      }
-
-      useChatStore.getState().flushStream()
-      useChatStore.getState().setStreaming(false)
-    } catch (err) {
-      useChatStore.getState().setStreaming(false)
-      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    // Otherwise, send follow-up via chat command
+    if (!selectedProjectId) {
+      useTuiStore.getState().setLastError('No project selected')
+      return
     }
-  }, [client, execute])
+    // Use task chat if a task node is selected, otherwise project chat
+    if (selectedNodeId) {
+      await execute(`task chat ${message}`)
+    } else {
+      await execute(`project chat ${message}`)
+    }
+  }, [execute])
 
   // Vim mode
   useVimMode({

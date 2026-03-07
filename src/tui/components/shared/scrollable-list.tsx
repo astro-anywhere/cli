@@ -28,11 +28,18 @@ export function ScrollableList({ items, selectedIndex, height, isFocused }: Scro
     )
   }
 
+  // Clamp index to valid range
+  const cursor = Math.min(Math.max(0, selectedIndex), items.length - 1)
+
   // Calculate visible window
   const visibleHeight = Math.max(1, height - 1)
   let start = 0
-  if (selectedIndex >= visibleHeight) {
-    start = selectedIndex - visibleHeight + 1
+  if (items.length > visibleHeight) {
+    if (cursor >= items.length - visibleHeight) {
+      start = items.length - visibleHeight
+    } else {
+      start = Math.max(0, cursor - Math.floor(visibleHeight / 2))
+    }
   }
   const visibleItems = items.slice(start, start + visibleHeight)
 
@@ -40,7 +47,7 @@ export function ScrollableList({ items, selectedIndex, height, isFocused }: Scro
     <Box flexDirection="column">
       {visibleItems.map((item, i) => {
         const actualIndex = start + i
-        const isSelected = actualIndex === selectedIndex && isFocused
+        const isSelected = actualIndex === cursor && isFocused
         const prefix = isSelected ? ' \u25B6 ' : '   '
         const sublabel = item.sublabel ? ` ${item.sublabel}` : ''
         const rightLabel = item.rightLabel ?? ''

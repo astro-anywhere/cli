@@ -1,6 +1,9 @@
 /**
  * Interactive agent session panel — combines execution output with user input.
  * Used for Playground and Plan Generation views (like a Claude Code session).
+ *
+ * Settings bar shows machine + working directory above the input area.
+ * Arrow keys move between settings fields; Enter opens a picker.
  */
 import React from 'react'
 import { Box, Text } from 'ink'
@@ -10,6 +13,8 @@ import { Spinner } from '../shared/spinner.js'
 import { useExecutionStore } from '../../stores/execution-store.js'
 import { useChatStore } from '../../stores/chat-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
+import { useMachinesStore } from '../../stores/machines-store.js'
+import { useSessionSettingsStore } from '../../stores/session-settings-store.js'
 import { truncate } from '../../lib/format.js'
 
 interface SessionPanelProps {
@@ -29,19 +34,31 @@ function lineColor(line: string): string | undefined {
   return undefined
 }
 
+/** Compact label for a machine */
+function machineLabel(name: string | null, id: string | null): string {
+  if (!id) return 'No machine'
+  return name || id.slice(0, 12)
+}
+
 export function SessionPanel({ height, title, sessionType, onSubmit }: SessionPanelProps) {
   const watchingId = useExecutionStore((s) => s.watchingId)
   const outputs = useExecutionStore((s) => s.outputs)
   const streaming = useChatStore((s) => s.streaming)
   const mode = useTuiStore((s) => s.mode)
 
+  // Session settings
+  const { machineId, machineName, workingDirectory, focusedField, pickerOpen } = useSessionSettingsStore()
+  const machines = useMachinesStore((s) => s.machines)
+  const connectedMachines = machines.filter((m) => m.isConnected)
+
   const execution = watchingId ? outputs.get(watchingId) : null
   const isRunning = execution?.status === 'running'
+  const settingsHeight = pickerOpen ? 2 + Math.min(connectedMachines.length, 5) : 2
   const inputHeight = 2
-  const outputHeight = Math.max(1, height - 5 - inputHeight) // border + title + input area
+  const outputHeight = Math.max(1, height - 5 - settingsHeight - inputHeight)
 
   // Determine if we should accept input
-  const isInputActive = mode === 'input'
+  const isInputActive = mode === 'input' && !focusedField && !pickerOpen
 
   // Build display: execution output lines
   const lines = execution?.lines ?? []
@@ -89,6 +106,73 @@ export function SessionPanel({ height, title, sessionType, onSubmit }: SessionPa
           <Text dimColor>  [{start + 1}-{Math.min(start + outputHeight, lines.length)}/{lines.length}]</Text>
         )}
 
+        {/* Settings bar: machine + working directory */}
+        <Box flexDirection="column">
+          <Box gap={2}>
+            <Box>
+              <Text dimColor>Machine: </Text>
+              <Text
+                color={focusedField === 'machine' ? 'cyan' : undefined}
+                bold={focusedField === 'machine'}
+                inverse={focusedField === 'machine'}
+              >
+                {' '}{machineLabel(machineName, machineId)}{' '}
+              </Text>
+            </Box>
+            <Box>
+              <Text dimColor>Dir: </Text>
+              <Text
+                color={focusedField === 'workdir' ? 'cyan' : undefined}
+                bold={focusedField === 'workdir'}
+                inverse={focusedField === 'workdir'}
+              >
+                {' '}{truncate(workingDirectory, 60)}{' '}
+              </Text>
+            </Box>
+            {!focusedField && (
+              <Text dimColor> (↑ to change settings)</Text>
+            )}
+            {focusedField && !pickerOpen && (
+              <Text dimColor> (Enter to edit, ↓ to input)</Text>
+            )}
+          </Box>
+
+          {/* Machine picker dropdown */}
+          {pickerOpen && focusedField === 'machine' && (
+            <Box flexDirection="column" marginLeft={2}>
+              {connectedMachines.length === 0 ? (
+                <Text dimColor>  No connected machines</Text>
+              ) : (
+                connectedMachines.slice(0, 5).map((m) => (
+                  <Text
+                    key={m.id}
+                    color={m.id === machineId ? 'green' : undefined}
+                  >
+                    {m.id === machineId ? '● ' : '  '}
+                    {m.name || m.id.slice(0, 12)} ({m.hostname}, {m.platform})
+                  </Text>
+                ))
+              )}
+            </Box>
+          )}
+
+          {/* Working directory editor */}
+          {pickerOpen && focusedField === 'workdir' && (
+            <Box marginLeft={2}>
+              <Text dimColor>Path: </Text>
+              <TextInput
+                defaultValue={workingDirectory}
+                onSubmit={(val) => {
+                  if (val.trim()) {
+                    useSessionSettingsStore.getState().setWorkingDirectory(val.trim())
+                  }
+                  useSessionSettingsStore.getState().setPickerOpen(false)
+                }}
+              />
+            </Box>
+          )}
+        </Box>
+
         {/* Input area */}
         <Box borderStyle="single" borderColor={isInputActive ? 'cyan' : 'gray'} paddingX={1}>
           {isRunning || streaming ? (
@@ -105,7 +189,6 @@ export function SessionPanel({ height, title, sessionType, onSubmit }: SessionPa
                   onSubmit={(value) => {
                     if (value.trim()) {
                       const msg = value.trim()
-                      // Show user message in output
                       if (watchingId) {
                         useExecutionStore.getState().appendLine(watchingId, `> ${msg}`)
                       }
@@ -115,7 +198,7 @@ export function SessionPanel({ height, title, sessionType, onSubmit }: SessionPa
                   }}
                 />
               ) : (
-                <Text dimColor>Press Enter to start typing...</Text>
+                <Text dimColor>{focusedField ? 'Press ↓ to return to input' : 'Press Enter to start typing...'}</Text>
               )}
             </Box>
           )}

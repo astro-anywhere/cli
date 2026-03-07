@@ -29,12 +29,12 @@ export function OutputPanel({ height }: OutputPanelProps) {
 
   const visibleHeight = Math.max(1, height - 4)
 
-  let title = 'OUTPUT'
+  let title = 'PROCESS OUTPUT'
   if (execution) {
     const shortId = execution.nodeId.length > 20
       ? execution.nodeId.slice(0, 8) + '\u2026'
       : execution.nodeId
-    title = `OUTPUT (${shortId}) [${execution.status}]`
+    title = `${shortId} [${execution.status}]`
   }
 
   if (!execution) {
