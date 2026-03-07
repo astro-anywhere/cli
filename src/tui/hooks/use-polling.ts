@@ -4,12 +4,48 @@
  */
 import { useEffect, useCallback } from 'react'
 import type { AstroClient } from '../../client.js'
+import type { Execution } from '../../client.js'
 import { useProjectsStore } from '../stores/projects-store.js'
 import { usePlanStore } from '../stores/plan-store.js'
 import { useMachinesStore } from '../stores/machines-store.js'
+import { useExecutionStore } from '../stores/execution-store.js'
 import { useTuiStore } from '../stores/tui-store.js'
 
-export function usePolling(client: AstroClient, intervalMs = 30000) {
+/** Derive a human-readable title from execution data */
+function deriveTitle(
+  nodeId: string,
+  exec: Execution,
+  projects: Array<{ id: string; name: string }>,
+  planNodes: Array<{ id: string; title: string; projectId: string }>,
+): string {
+  const projectName = projects.find((p) => p.id === exec.projectId)?.name
+
+  // Playground session: "Playground — ProjectName"
+  if (nodeId.startsWith('playground-')) {
+    // Extract first line of streamText as description if available
+    const firstLine = exec.streamText?.split('\n').find((l) => l.trim().length > 0)?.trim()
+    if (firstLine && firstLine.length > 5) {
+      return `Playground: ${firstLine.slice(0, 50)}`
+    }
+    return `Playground${projectName ? ` — ${projectName}` : ''}`
+  }
+
+  // Plan generation: "Plan — ProjectName"
+  if (nodeId.startsWith('plan-')) {
+    return `Plan${projectName ? ` — ${projectName}` : ''}`
+  }
+
+  // Task execution: use plan node title
+  const planNode = planNodes.find((n) => n.id === nodeId)
+  if (planNode) {
+    return planNode.title
+  }
+
+  // Fallback: project name or short ID
+  return projectName ? `Task — ${projectName}` : nodeId.slice(0, 30)
+}
+
+export function usePolling(client: AstroClient, intervalMs = 10000) {
   const selectedProjectId = useTuiStore((s) => s.selectedProjectId)
 
   const loadProjects = useCallback(async () => {
@@ -43,6 +79,28 @@ export function usePolling(client: AstroClient, intervalMs = 30000) {
     }
   }, [client])
 
+  const loadExecutions = useCallback(async () => {
+    try {
+      const execMap = await client.getExecutions()
+      const projects = useProjectsStore.getState().projects
+      const planNodes = usePlanStore.getState().nodes
+
+      const entries = Object.values(execMap).map((e: Execution) => {
+        const nodeId = e.nodeClientId ?? e.nodeId ?? e.executionId
+        return {
+          executionId: e.executionId,
+          nodeId,
+          title: deriveTitle(nodeId, e, projects, planNodes),
+          status: e.status,
+          startedAt: e.startedAt,
+        }
+      })
+      useExecutionStore.getState().seedHistorical(entries)
+    } catch {
+      // Executions endpoint may not be available — ignore
+    }
+  }, [client])
+
   const loadUsage = useCallback(async () => {
     try {
       const history = await client.getUsageHistory(1)
@@ -58,10 +116,11 @@ export function usePolling(client: AstroClient, intervalMs = 30000) {
     await Promise.allSettled([
       loadProjects(),
       loadMachines(),
+      loadExecutions(),
       loadUsage(),
       ...(selectedProjectId ? [loadPlan(selectedProjectId)] : []),
     ])
-  }, [loadProjects, loadMachines, loadUsage, loadPlan, selectedProjectId])
+  }, [loadProjects, loadMachines, loadExecutions, loadUsage, loadPlan, selectedProjectId])
 
   // Initial load
   useEffect(() => {

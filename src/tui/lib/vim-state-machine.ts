@@ -92,7 +92,7 @@ function handleKey(
     case 'search':
       return handleSearchMode(state, key)
     case 'input':
-      return handleInputMode(state, key)
+      return handleInputMode(state, key, ctrl)
   }
 }
 
@@ -107,6 +107,7 @@ function handleNormalMode(
     switch (key) {
       case 'p': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]
       case 'f': return [state, { type: 'search' }]
+      case 'd': return [state, { type: 'cancel' }]
       case 'c': return [state, { type: 'quit' }]
       case 'r': return [state, { type: 'refresh' }]
       default: return [state, { type: 'none' }]
@@ -153,10 +154,11 @@ function handleNormalMode(
     case '2': return [state, { type: 'view', value: 'plan-gen' }]
     case '3': return [state, { type: 'view', value: 'projects' }]
     case '4': return [state, { type: 'view', value: 'playground' }]
-    case '5': return [state, { type: 'view', value: 'output' }]
+    case '5': return [state, { type: 'view', value: 'active' }]
 
     // Function-key style shortcuts (single letter, no prefix needed)
     case 'd': return [state, { type: 'dispatch' }]
+    case 'x': return [state, { type: 'cancel' }]
     case 'q': return [state, { type: 'quit' }]
     case '?': return [state, { type: 'help' }]
     case '/': return [state, { type: 'search' }]
@@ -221,7 +223,11 @@ function handleSearchMode(state: VimState, key: string): [VimState, VimEffect] {
   return [state, { type: 'none' }]
 }
 
-function handleInputMode(state: VimState, _: string): [VimState, VimEffect] {
+function handleInputMode(state: VimState, key: string, ctrl?: boolean): [VimState, VimEffect] {
+  // Ctrl+D cancels the running process even from input mode
+  if (ctrl && key === 'd') {
+    return [{ ...state, mode: 'normal' }, { type: 'cancel' }]
+  }
   // Input mode passes all keys through — handled by the component
   return [state, { type: 'none' }]
 }

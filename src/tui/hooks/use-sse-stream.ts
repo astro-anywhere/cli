@@ -10,7 +10,7 @@ import { useMachinesStore } from '../stores/machines-store.js'
 import { useExecutionStore } from '../stores/execution-store.js'
 import { usePlanStore } from '../stores/plan-store.js'
 
-export function useSSEStream(client: AstroClient) {
+export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
   const sseRef = useRef<SSEClient | null>(null)
 
   const setConnected = useTuiStore((s) => s.setConnected)
@@ -23,6 +23,8 @@ export function useSSEStream(client: AstroClient) {
         case '__connected':
           setConnected(true)
           setLastError(null)
+          // Refresh data on reconnect — picks up changes made from browser
+          onReconnect?.()
           break
 
         case '__disconnected':
@@ -111,7 +113,8 @@ export function useSSEStream(client: AstroClient) {
         case 'task:session_init': {
           const taskId = event.data.taskId as string
           const nodeId = (event.data.nodeId ?? taskId) as string
-          useExecutionStore.getState().initExecution(taskId, nodeId)
+          const title = (event.data.title as string | undefined) ?? nodeId
+          useExecutionStore.getState().initExecution(taskId, nodeId, title)
           useExecutionStore.getState().setWatching(taskId)
           break
         }

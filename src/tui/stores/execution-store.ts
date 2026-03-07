@@ -9,6 +9,7 @@ const MAX_LINES = 5000
 export interface ExecutionOutput {
   executionId: string
   nodeId: string
+  title: string
   lines: string[]
   status: string
   startedAt: string | null
@@ -37,7 +38,9 @@ export interface ExecutionActions {
   appendText: (executionId: string, text: string) => void
   appendToolCall: (executionId: string, toolName: string) => void
   appendFileChange: (executionId: string, path: string, action: string, added?: number, removed?: number) => void
-  initExecution: (executionId: string, nodeId: string) => void
+  initExecution: (executionId: string, nodeId: string, title?: string) => void
+  /** Seed historical executions from server — won't overwrite live entries */
+  seedHistorical: (entries: Array<{ executionId: string; nodeId: string; title: string; status: string; startedAt: string | null }>) => void
   setStatus: (executionId: string, status: string) => void
   setWatching: (executionId: string | null) => void
   setPendingApproval: (approval: PendingApproval | null) => void
@@ -66,17 +69,37 @@ export const useExecutionStore = create<ExecutionState & ExecutionActions>((set,
   watchingId: null,
   pendingApproval: null,
 
-  initExecution: (executionId, nodeId) => {
+  initExecution: (executionId, nodeId, title) => {
     const { outputs } = get()
     const next = new Map(outputs)
     next.set(executionId, {
       executionId,
       nodeId,
+      title: title ?? nodeId,
       lines: [],
       status: 'running',
       startedAt: new Date().toISOString(),
       pendingToolCount: 0,
     })
+    set({ outputs: next })
+  },
+
+  seedHistorical: (entries) => {
+    const { outputs } = get()
+    const next = new Map(outputs)
+    for (const entry of entries) {
+      // Don't overwrite live entries that have streaming data
+      if (next.has(entry.executionId)) continue
+      next.set(entry.executionId, {
+        executionId: entry.executionId,
+        nodeId: entry.nodeId,
+        title: entry.title,
+        lines: [],
+        status: entry.status,
+        startedAt: entry.startedAt,
+        pendingToolCount: 0,
+      })
+    }
     set({ outputs: next })
   },
 

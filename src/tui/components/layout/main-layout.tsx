@@ -10,6 +10,7 @@ import { MachinesPanel } from '../panels/machines-panel.js'
 import { OutputPanel } from '../panels/output-panel.js'
 import { ChatPanel } from '../panels/chat-panel.js'
 import { SessionPanel } from '../panels/session-panel.js'
+import { ActiveListPanel } from '../panels/active-list-panel.js'
 import { DetailOverlay } from '../panels/detail-overlay.js'
 import { ApprovalDialog } from '../shared/approval-dialog.js'
 import { useTuiStore } from '../../stores/tui-store.js'
@@ -106,9 +107,12 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
         </Box>
       </Box>
     )
-  } else if (activeView === 'output') {
+  } else if (activeView === 'active') {
     content = (
       <Box flexDirection="row" height={contentHeight}>
+        <Box width="25%">
+          <ActiveListPanel height={contentHeight} />
+        </Box>
         <Box flexGrow={1}>
           <OutputPanel height={contentHeight} />
         </Box>

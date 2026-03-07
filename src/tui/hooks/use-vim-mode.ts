@@ -69,7 +69,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
         case 'select': {
           const view = store.activeView
           // In session views, Enter activates input mode
-          if (view === 'playground' || view === 'plan-gen' || view === 'output') {
+          if (view === 'playground' || view === 'plan-gen' || view === 'active') {
             vimState.current = { ...vimState.current, mode: 'input' }
             store.setMode('input')
           } else {
@@ -88,7 +88,9 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
             const filtered = getFilteredPaletteCommands(vimState.current.commandBuffer)
             const selected = filtered[store.paletteIndex]
             if (selected) {
-              callbacks.onCommand?.(selected.name)
+              // Dynamic commands (like resume) use usage as the executable command
+              const cmd = selected.usage?.startsWith('resume:') ? selected.usage : selected.name
+              callbacks.onCommand?.(cmd)
             }
           } else if (effect.value?.startsWith('__autocomplete__')) {
             // Autocomplete handled by command-line component
@@ -127,7 +129,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           break
 
         case 'view':
-          if (effect.value === 'dashboard' || effect.value === 'plan-gen' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'output') {
+          if (effect.value === 'dashboard' || effect.value === 'plan-gen' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'active') {
             store.setActiveView(effect.value)
           }
           break

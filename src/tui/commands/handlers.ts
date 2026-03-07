@@ -155,47 +155,18 @@ export const handlers: Record<string, CommandHandler> = {
     }
 
     try {
-      // Send minimal payload — server resolves everything from DB
+      // POST returns JSON { success, executionId } — real-time events come via global SSE stream
       const response = await client.dispatchTask({ nodeId, projectId })
-      // Init execution tracking
-      const execId = `exec-${Date.now()}`
-      useExecutionStore.getState().initExecution(execId, nodeId)
+      const result = await response.json() as { success?: boolean; executionId?: string }
+
+      const execId = result.executionId ?? `exec-${Date.now()}`
+      // Try to get title from plan node
+      const planNode = usePlanStore.getState().nodes.find((n) => n.id === nodeId)
+      const title = planNode?.title ?? nodeId
+      useExecutionStore.getState().initExecution(execId, nodeId, title)
       useExecutionStore.getState().setWatching(execId)
       useTuiStore.getState().focusPanel('output')
-
-      // Stream response
-      if (response.body) {
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const event = JSON.parse(line.slice(6)) as Record<string, unknown>
-                const eventType = event.type as string
-                if (eventType === 'text') {
-                  useExecutionStore.getState().appendText(execId, (event.content ?? '') as string)
-                } else if (eventType === 'tool_use') {
-                  useExecutionStore.getState().appendToolCall(execId, (event.name ?? '') as string)
-                } else if (eventType === 'result') {
-                  useExecutionStore.getState().setStatus(execId, (event.status ?? 'completed') as string)
-                } else if (eventType === 'error') {
-                  useExecutionStore.getState().appendLine(execId, `[error] ${event.message}`)
-                  useExecutionStore.getState().setStatus(execId, 'failure')
-                }
-              } catch {
-                // Skip non-JSON
-              }
-            }
-          }
-        }
-      }
+      useExecutionStore.getState().appendLine(execId, `[progress] Task dispatched (${execId})`)
     } catch (err) {
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
     }
@@ -309,6 +280,7 @@ export const handlers: Record<string, CommandHandler> = {
     const nodeId = `playground-${projectId}-${Date.now()}`
 
     try {
+      // POST returns JSON — real-time events come via global SSE stream
       const response = await client.dispatchTask({
         nodeId,
         projectId,
@@ -316,12 +288,14 @@ export const handlers: Record<string, CommandHandler> = {
         description,
         title: `Playground: ${description.slice(0, 50)}`,
       })
+      const result = await response.json() as { success?: boolean; executionId?: string }
 
-      useExecutionStore.getState().initExecution(nodeId, nodeId)
-      useExecutionStore.getState().setWatching(nodeId)
+      const execId = result.executionId ?? nodeId
+      const title = `Playground: ${description.slice(0, 50)}`
+      useExecutionStore.getState().initExecution(execId, nodeId, title)
+      useExecutionStore.getState().setWatching(execId)
       useTuiStore.getState().setActiveView('playground')
-
-      await streamExecution(nodeId, response)
+      useExecutionStore.getState().appendLine(execId, `[progress] Playground session started (${execId})`)
     } catch (err) {
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
     }
@@ -343,26 +317,48 @@ export const handlers: Record<string, CommandHandler> = {
     const nodeId = `plan-${projectId}`
 
     try {
+      // POST returns JSON — real-time events come via global SSE stream
+      // Plan refresh is handled by task:plan_result event in use-sse-stream.ts
       const response = await client.dispatchTask({
         nodeId,
         projectId,
         isInteractivePlan: true,
         description,
       })
+      const result = await response.json() as { success?: boolean; executionId?: string }
 
-      useExecutionStore.getState().initExecution(nodeId, nodeId)
-      useExecutionStore.getState().setWatching(nodeId)
+      const execId = result.executionId ?? nodeId
+      const title = `Plan: ${description.slice(0, 50)}`
+      useExecutionStore.getState().initExecution(execId, nodeId, title)
+      useExecutionStore.getState().setWatching(execId)
       useTuiStore.getState().setActiveView('plan-gen')
-
-      await streamExecution(nodeId, response)
-
-      // After plan generation completes, refresh plan and go back to dashboard
-      useExecutionStore.getState().appendLine(nodeId, '[plan] Refreshing plan...')
-      const { nodes, edges } = await client.getPlan(projectId)
-      usePlanStore.getState().setPlan(projectId, nodes, edges)
-      useTuiStore.getState().setActiveView('dashboard')
+      useExecutionStore.getState().appendLine(execId, `[progress] Plan generation started (${execId})`)
     } catch (err) {
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  // ── Resume ──
+  resume: async (args) => {
+    // Called as "resume:<executionId>" from palette or "resume <executionId>"
+    const execId = args[0]
+    if (!execId) {
+      useTuiStore.getState().setLastError('Usage: resume <executionId>')
+      return
+    }
+    const exec = useExecutionStore.getState().outputs.get(execId)
+    if (!exec) {
+      useTuiStore.getState().setLastError(`Session not found: ${execId}`)
+      return
+    }
+    useExecutionStore.getState().setWatching(execId)
+    // Switch to the appropriate view based on nodeId prefix
+    if (exec.nodeId.startsWith('playground-')) {
+      useTuiStore.getState().setActiveView('playground')
+    } else if (exec.nodeId.startsWith('plan-')) {
+      useTuiStore.getState().setActiveView('plan-gen')
+    } else {
+      useTuiStore.getState().setActiveView('active')
     }
   },
 
@@ -375,62 +371,6 @@ export const handlers: Record<string, CommandHandler> = {
   },
 }
 
-/**
- * Stream SSE response from a dispatch into the execution store output panel.
- * Parses each SSE line and routes text/tool/file events to the execution store.
- */
-async function streamExecution(executionId: string, response: Response): Promise<void> {
-  if (!response.body) return
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      try {
-        const event = JSON.parse(line.slice(6)) as Record<string, unknown>
-        const eventType = event.type as string
-        if (eventType === 'text') {
-          useExecutionStore.getState().appendText(executionId, (event.content ?? '') as string)
-        } else if (eventType === 'tool_use') {
-          useExecutionStore.getState().appendToolCall(executionId, (event.name ?? '') as string)
-        } else if (eventType === 'file_change') {
-          useExecutionStore.getState().appendFileChange(
-            executionId,
-            (event.path ?? '') as string,
-            (event.action ?? 'modified') as string,
-            event.linesAdded as number | undefined,
-            event.linesRemoved as number | undefined,
-          )
-        } else if (eventType === 'result' || eventType === 'done') {
-          useExecutionStore.getState().setStatus(executionId, (event.status ?? 'completed') as string)
-        } else if (eventType === 'error') {
-          useExecutionStore.getState().appendLine(executionId, `[error] ${event.message}`)
-          useExecutionStore.getState().setStatus(executionId, 'failure')
-        } else if (eventType === 'plan_result') {
-          useExecutionStore.getState().appendLine(executionId, '[plan] Plan generated successfully')
-        } else if (eventType === 'approval_request') {
-          useExecutionStore.getState().setPendingApproval({
-            requestId: event.requestId as string,
-            question: event.question as string,
-            options: event.options as string[],
-            machineId: event.machineId as string | undefined,
-            taskId: event.taskId as string | undefined,
-          })
-        }
-      } catch {
-        // Skip non-JSON
-      }
-    }
-  }
-}
 
 async function refreshAll(client: AstroClient) {
   try {

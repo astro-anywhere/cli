@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import type { VimMode } from '../lib/vim-state-machine.js'
 
 export type PanelId = 'projects' | 'plan' | 'machines' | 'output' | 'chat'
-export type ViewId = 'dashboard' | 'plan-gen' | 'projects' | 'playground' | 'output'
+export type ViewId = 'dashboard' | 'plan-gen' | 'projects' | 'playground' | 'active'
 
 const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output', 'chat']
 

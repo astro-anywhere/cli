@@ -23,8 +23,8 @@ export function App({ serverUrl }: AppProps) {
   // Data loading
   const { refreshAll } = usePolling(client)
 
-  // SSE streaming
-  useSSEStream(client)
+  // SSE streaming — refresh data on reconnect to pick up browser changes
+  useSSEStream(client, refreshAll)
 
   // Fuzzy search
   useFuzzySearch()
