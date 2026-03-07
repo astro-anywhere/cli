@@ -13,6 +13,7 @@ import { useCallback, useRef } from 'react'
 import { useInput, useApp } from 'ink'
 import { initialVimState, vimReducer, type VimState, type VimEffect } from '../lib/vim-state-machine.js'
 import { useTuiStore } from '../stores/tui-store.js'
+import { useSearchStore } from '../stores/search-store.js'
 import { getFilteredPaletteCommands } from '../commands/palette-filter.js'
 
 export interface VimModeCallbacks {
@@ -97,9 +98,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           break
 
         case 'search':
-          if (effect.value) {
-            callbacks.onSearch?.(effect.value)
-          }
+          useSearchStore.getState().open()
           break
 
         case 'dispatch':
@@ -142,8 +141,10 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
 
   useInput((input, key) => {
     // Don't handle input when overlays are open (except Escape)
-    if (store.showHelp || store.showSearch || store.showDetail) {
+    const searchOpen = useSearchStore.getState().isOpen
+    if (store.showHelp || store.showSearch || store.showDetail || searchOpen) {
       if (key.escape) {
+        if (searchOpen) useSearchStore.getState().close()
         store.closeOverlays()
         vimState.current = initialVimState()
         store.setMode('normal')

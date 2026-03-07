@@ -1,16 +1,28 @@
 import React from 'react'
-import { Box, Text, useInput } from 'ink'
+import { Box, Text, useInput, useStdout } from 'ink'
 import { useSearchStore } from '../../stores/search-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
 import { getStatusColor } from '../../lib/status-colors.js'
+
+const MAX_VISIBLE = 12
+
+const TYPE_LABELS: Record<string, { label: string; color: string }> = {
+  project: { label: 'proj', color: 'cyan' },
+  task: { label: 'task', color: 'yellow' },
+  machine: { label: 'env', color: 'green' },
+  execution: { label: 'exec', color: 'magenta' },
+}
 
 export function SearchOverlay() {
   const isOpen = useSearchStore((s) => s.isOpen)
   const query = useSearchStore((s) => s.query)
   const results = useSearchStore((s) => s.results)
+  const items = useSearchStore((s) => s.items)
   const selectedIndex = useSearchStore((s) => s.selectedIndex)
   const { setQuery, moveUp, moveDown, close } = useSearchStore()
-  const { setSelectedProject, setSelectedNode, setSelectedMachine, focusPanel } = useTuiStore()
+  const { setSelectedProject, setSelectedNode, setSelectedMachine, focusPanel, openDetail } = useTuiStore()
+  const { stdout } = useStdout()
+  const termWidth = stdout?.columns ?? 80
 
   useInput((input, key) => {
     if (!isOpen) return
@@ -25,13 +37,14 @@ export function SearchOverlay() {
       return
     }
 
-    if (key.downArrow) {
+    if (key.downArrow || key.tab) {
       moveDown()
       return
     }
 
-    if (key.return && results.length > 0) {
-      const item = results[selectedIndex]
+    if (key.return) {
+      const displayList = query.length > 0 ? results : items
+      const item = displayList[selectedIndex]
       if (item) {
         switch (item.type) {
           case 'project':
@@ -41,6 +54,7 @@ export function SearchOverlay() {
           case 'task':
             setSelectedNode(item.id)
             focusPanel('plan')
+            openDetail('node', item.id)
             break
           case 'machine':
             setSelectedMachine(item.id)
@@ -64,41 +78,73 @@ export function SearchOverlay() {
 
   if (!isOpen) return null
 
+  // Show all items when query is empty, filtered results otherwise
+  const displayList = query.length > 0 ? results : items
+  const visible = displayList.slice(0, MAX_VISIBLE)
+
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-      paddingY={0}
-      width="60%"
-      height={Math.min(results.length + 4, 15)}
-    >
-      <Box>
-        <Text bold color="cyan">Search: </Text>
-        <Text>{query}</Text>
-        <Text color="cyan">{'\u2588'}</Text>
-      </Box>
-      <Box flexDirection="column" marginTop={1}>
-        {results.length === 0 && query.length > 0 && (
-          <Text dimColor>  No results</Text>
-        )}
-        {results.slice(0, 10).map((item, i) => (
-          <Box key={item.id}>
-            <Text
-              inverse={i === selectedIndex}
-              bold={i === selectedIndex}
-              color={i === selectedIndex ? 'cyan' : undefined}
-            >
-              {i === selectedIndex ? ' \u25B6 ' : '   '}
-              <Text dimColor>[{item.type}]</Text>
-              {' '}{item.title}
-              {item.status && (
-                <Text color={getStatusColor(item.status)}> [{item.status}]</Text>
-              )}
-            </Text>
-          </Box>
-        ))}
+    <Box flexDirection="column" position="absolute" marginTop={2} marginLeft={Math.floor(termWidth * 0.1)}>
+      <Box
+        flexDirection="column"
+        borderStyle="single"
+        borderColor="cyan"
+        paddingX={1}
+        width={Math.min(70, termWidth - 8)}
+      >
+        {/* Search input */}
+        <Box>
+          <Text bold color="cyan">/ </Text>
+          <Text>{query}</Text>
+          <Text color="cyan">{'\u2588'}</Text>
+          <Text dimColor>  ({'\u2191\u2193'} navigate, Enter to go, Esc to close)</Text>
+        </Box>
+
+        {/* Results list */}
+        <Box flexDirection="column" marginTop={1}>
+          {visible.length === 0 ? (
+            <Text dimColor>  {query.length > 0 ? 'No results' : 'No items to search'}</Text>
+          ) : (
+            visible.map((item, i) => {
+              const isSelected = i === selectedIndex
+              const typeInfo = TYPE_LABELS[item.type] ?? { label: item.type, color: 'white' }
+              return (
+                <Box key={`${item.type}-${item.id}`}>
+                  <Text
+                    inverse={isSelected}
+                    bold={isSelected}
+                    color={isSelected ? 'cyan' : undefined}
+                  >
+                    {isSelected ? ' > ' : '   '}
+                  </Text>
+                  <Text
+                    inverse={isSelected}
+                    color={isSelected ? 'cyan' : typeInfo.color}
+                  >
+                    [{typeInfo.label}]
+                  </Text>
+                  <Text
+                    inverse={isSelected}
+                    bold={isSelected}
+                  >
+                    {' '}{item.title}
+                  </Text>
+                  {item.status && (
+                    <Text
+                      inverse={isSelected}
+                      color={isSelected ? undefined : getStatusColor(item.status)}
+                      dimColor={!isSelected}
+                    >
+                      {' '}{item.status}
+                    </Text>
+                  )}
+                </Box>
+              )
+            })
+          )}
+          {displayList.length > MAX_VISIBLE && (
+            <Text dimColor>  ...and {displayList.length - MAX_VISIBLE} more</Text>
+          )}
+        </Box>
       </Box>
     </Box>
   )

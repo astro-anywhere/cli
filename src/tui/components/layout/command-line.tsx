@@ -10,6 +10,7 @@ const SHORTCUTS = [
   { key: '3', label: 'Projects' },
   { key: '4', label: 'Playground' },
   { key: '5', label: 'Output' },
+  { key: '/', label: 'Search' },
   { key: 'C-p', label: 'Commands' },
   { key: 'd', label: 'Dispatch' },
   { key: '?', label: 'Help' },

@@ -106,7 +106,7 @@ function handleNormalMode(
   if (ctrl) {
     switch (key) {
       case 'p': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]
-      case 'f': return [{ ...state, mode: 'search', searchQuery: '' }, { type: 'none' }]
+      case 'f': return [state, { type: 'search' }]
       case 'c': return [state, { type: 'quit' }]
       case 'r': return [state, { type: 'refresh' }]
       default: return [state, { type: 'none' }]
@@ -159,7 +159,7 @@ function handleNormalMode(
     case 'd': return [state, { type: 'dispatch' }]
     case 'q': return [state, { type: 'quit' }]
     case '?': return [state, { type: 'help' }]
-    case '/': return [{ ...state, mode: 'search', searchQuery: '' }, { type: 'none' }]
+    case '/': return [state, { type: 'search' }]
 
     // Legacy `:` still works — enters palette mode
     case ':': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]

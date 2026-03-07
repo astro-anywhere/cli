@@ -142,11 +142,10 @@ describe('vim-state-machine', () => {
       expect(e).toEqual({ type: 'help' })
     })
 
-    it('/ enters search mode', () => {
+    it('/ emits search effect', () => {
       const [s, e] = vimReducer(initialVimState(), key('/'))
-      expect(s.mode).toBe('search')
-      expect(s.searchQuery).toBe('')
-      expect(e.type).toBe('none')
+      expect(s.mode).toBe('normal')
+      expect(e).toEqual({ type: 'search' })
     })
 
     it(': enters palette mode (legacy)', () => {
@@ -167,10 +166,9 @@ describe('vim-state-machine', () => {
       expect(e.type).toBe('palette')
     })
 
-    it('Ctrl+F opens search', () => {
-      const [s, e] = vimReducer(initialVimState(), key('f', { ctrl: true }))
-      expect(s.mode).toBe('search')
-      expect(s.searchQuery).toBe('')
+    it('Ctrl+F emits search effect', () => {
+      const [, e] = vimReducer(initialVimState(), key('f', { ctrl: true }))
+      expect(e).toEqual({ type: 'search' })
     })
 
     it('Ctrl+C quits', () => {
@@ -408,23 +406,13 @@ describe('vim-state-machine', () => {
       expect(effect).toEqual({ type: 'command', value: '__palette_select__' })
     })
 
-    it('/ → type "node" → Enter performs search', () => {
+    it('/ emits search effect (overlay handles input)', () => {
       let state = initialVimState()
       let effect
 
-      ;[state] = vimReducer(state, key('/'))
-      expect(state.mode).toBe('search')
-
-      ;[state, effect] = vimReducer(state, key('n'))
-      expect(effect).toEqual({ type: 'search', value: 'n' })
-
-      ;[state] = vimReducer(state, key('o'))
-      ;[state] = vimReducer(state, key('d'))
-      ;[state] = vimReducer(state, key('e'))
-
-      ;[state, effect] = vimReducer(state, key('return'))
+      ;[state, effect] = vimReducer(state, key('/'))
       expect(state.mode).toBe('normal')
-      expect(effect).toEqual({ type: 'search', value: 'node' })
+      expect(effect).toEqual({ type: 'search' })
     })
 
     it('palette → type → Escape cancels without submitting', () => {
