@@ -1,15 +1,24 @@
 /**
- * Pure finite state machine for vim-style modal navigation.
- * No React/Ink dependencies — testable in isolation.
+ * Input state machine — htop/helm style (non-modal).
+ * Replaces vim-modal navigation with always-ready direct interaction.
+ *
+ * Modes:
+ * - 'normal'  — arrow keys navigate, function keys trigger actions
+ * - 'palette' — command palette open, typing filters commands
+ * - 'search'  — search overlay open, typing filters items
+ * - 'input'   — text input active (steer message, chat, etc.)
  */
 
-export type VimMode = 'normal' | 'command' | 'search' | 'insert'
+export type VimMode = 'normal' | 'palette' | 'search' | 'input'
+
+// Keep 'command' as alias for backward compatibility with store references
+export type { VimMode as InputMode }
 
 export interface VimState {
   mode: VimMode
   commandBuffer: string
   searchQuery: string
-  pendingKeys: string  // for multi-key commands like 'gg'
+  pendingKeys: string
 }
 
 export type VimAction =
@@ -21,7 +30,7 @@ export type VimAction =
   | { type: 'submit_search' }
 
 export interface VimEffect {
-  type: 'navigate' | 'scroll' | 'select' | 'focus' | 'command' | 'search' | 'quit' | 'dispatch' | 'cancel' | 'refresh' | 'help' | 'none'
+  type: 'navigate' | 'scroll' | 'select' | 'focus' | 'command' | 'search' | 'quit' | 'dispatch' | 'cancel' | 'refresh' | 'help' | 'palette' | 'chat' | 'view' | 'none'
   direction?: 'up' | 'down' | 'left' | 'right' | 'top' | 'bottom' | 'page_up' | 'page_down'
   panel?: number
   value?: string
@@ -60,7 +69,7 @@ export function vimReducer(state: VimState, action: VimAction): [VimState, VimEf
       ]
 
     case 'key':
-      return handleKey(state, action.key, action.ctrl)
+      return handleKey(state, action.key, action.ctrl, action.meta)
   }
 }
 
@@ -68,6 +77,7 @@ function handleKey(
   state: VimState,
   key: string,
   ctrl?: boolean,
+  meta?: boolean,
 ): [VimState, VimEffect] {
   // Escape always returns to normal mode
   if (key === 'escape') {
@@ -76,13 +86,13 @@ function handleKey(
 
   switch (state.mode) {
     case 'normal':
-      return handleNormalMode(state, key, ctrl)
-    case 'command':
-      return handleCommandMode(state, key)
+      return handleNormalMode(state, key, ctrl, meta)
+    case 'palette':
+      return handlePaletteMode(state, key)
     case 'search':
       return handleSearchMode(state, key)
-    case 'insert':
-      return handleInsertMode(state, key)
+    case 'input':
+      return handleInputMode(state, key)
   }
 }
 
@@ -90,81 +100,81 @@ function handleNormalMode(
   state: VimState,
   key: string,
   ctrl?: boolean,
+  meta?: boolean,
 ): [VimState, VimEffect] {
-  // Ctrl combos
+  // ── Ctrl combos (tmux-safe: avoid Ctrl+b, Ctrl+a) ──
   if (ctrl) {
-    if (key === 'u') return [state, { type: 'scroll', direction: 'page_up' }]
-    if (key === 'd') return [state, { type: 'scroll', direction: 'page_down' }]
-    if (key === 'c') return [state, { type: 'quit' }]
-    return [state, { type: 'none' }]
-  }
-
-  // Multi-key: gg
-  if (state.pendingKeys === 'g') {
-    if (key === 'g') {
-      return [{ ...state, pendingKeys: '' }, { type: 'scroll', direction: 'top' }]
+    switch (key) {
+      case 'p': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]
+      case 'f': return [state, { type: 'search' }]
+      case 'c': return [state, { type: 'quit' }]
+      case 'r': return [state, { type: 'refresh' }]
+      default: return [state, { type: 'none' }]
     }
-    // Invalid sequence, reset
-    return [{ ...state, pendingKeys: '' }, { type: 'none' }]
   }
 
-  // Single keys
+  // ── Meta/Alt combos ──
+  if (meta) {
+    switch (key) {
+      case 'x': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]
+      default: return [state, { type: 'none' }]
+    }
+  }
+
+  // ── Direct keys (always-active, no mode switching needed) ──
   switch (key) {
-    // Navigation
-    case 'j': case 'return':
-      if (key === 'j') return [state, { type: 'scroll', direction: 'down' }]
-      return [state, { type: 'select' }]
-    case 'k':
-      return [state, { type: 'scroll', direction: 'up' }]
-    case 'h':
-      return [state, { type: 'focus', direction: 'left' }]
-    case 'l':
-      return [state, { type: 'focus', direction: 'right' }]
+    // Arrow navigation (primary — no j/k needed)
+    case 'up': return [state, { type: 'scroll', direction: 'up' }]
+    case 'down': return [state, { type: 'scroll', direction: 'down' }]
+    case 'left': return [state, { type: 'focus', direction: 'left' }]
+    case 'right': return [state, { type: 'focus', direction: 'right' }]
 
-    // Panel jump
-    case '1': return [state, { type: 'focus', panel: 0 }]
-    case '2': return [state, { type: 'focus', panel: 1 }]
-    case '3': return [state, { type: 'focus', panel: 2 }]
-    case '4': return [state, { type: 'focus', panel: 3 }]
-    case 'tab':
-      return [state, { type: 'focus', direction: 'right' }]
+    // Also keep j/k/h/l as secondary navigation for power users
+    case 'j': return [state, { type: 'scroll', direction: 'down' }]
+    case 'k': return [state, { type: 'scroll', direction: 'up' }]
+    case 'h': return [state, { type: 'focus', direction: 'left' }]
+    case 'l': return [state, { type: 'focus', direction: 'right' }]
 
-    // Top/bottom
-    case 'g':
-      return [{ ...state, pendingKeys: 'g' }, { type: 'none' }]
-    case 'G':
-      return [state, { type: 'scroll', direction: 'bottom' }]
+    // Selection
+    case 'return': return [state, { type: 'select' }]
+    case ' ': return [state, { type: 'select' }]
 
-    // Mode switches
-    case ':':
-      return [{ ...state, mode: 'command', commandBuffer: '' }, { type: 'none' }]
-    case '/':
-      return [{ ...state, mode: 'search', searchQuery: '' }, { type: 'none' }]
-    case 'i':
-      return [{ ...state, mode: 'insert' }, { type: 'none' }]
+    // Page navigation
+    case 'pageup': return [state, { type: 'scroll', direction: 'page_up' }]
+    case 'pagedown': return [state, { type: 'scroll', direction: 'page_down' }]
+    case 'home': return [state, { type: 'scroll', direction: 'top' }]
+    case 'end': return [state, { type: 'scroll', direction: 'bottom' }]
 
-    // Actions
-    case 'd':
-      return [state, { type: 'dispatch' }]
-    case 'c':
-      return [state, { type: 'cancel' }]
-    case 'r':
-      return [state, { type: 'refresh' }]
-    case 'q':
-      return [state, { type: 'quit' }]
-    case '?':
-      return [state, { type: 'help' }]
+    // Tab cycles panels
+    case 'tab': return [state, { type: 'focus', direction: 'right' }]
+
+    // View switch by number
+    case '1': return [state, { type: 'view', value: 'dashboard' }]
+    case '2': return [state, { type: 'view', value: 'plan-gen' }]
+    case '3': return [state, { type: 'view', value: 'projects' }]
+    case '4': return [state, { type: 'view', value: 'playground' }]
+    case '5': return [state, { type: 'view', value: 'output' }]
+
+    // Function-key style shortcuts (single letter, no prefix needed)
+    case 'd': return [state, { type: 'dispatch' }]
+    case 'q': return [state, { type: 'quit' }]
+    case '?': return [state, { type: 'help' }]
+    case '/': return [state, { type: 'search' }]
+
+    // Legacy `:` still works — enters palette mode
+    case ':': return [{ ...state, mode: 'palette', commandBuffer: '' }, { type: 'palette' }]
 
     default:
       return [state, { type: 'none' }]
   }
 }
 
-function handleCommandMode(state: VimState, key: string): [VimState, VimEffect] {
+function handlePaletteMode(state: VimState, key: string): [VimState, VimEffect] {
   if (key === 'return') {
+    // Always use __palette_select__ — the hook resolves to the highlighted item
     return [
       { ...state, mode: 'normal' },
-      { type: 'command', value: state.commandBuffer },
+      { type: 'command', value: '__palette_select__' },
     ]
   }
   if (key === 'backspace' || key === 'delete') {
@@ -174,11 +184,16 @@ function handleCommandMode(state: VimState, key: string): [VimState, VimEffect] 
     }
     return [{ ...state, commandBuffer: newBuffer }, { type: 'none' }]
   }
-  if (key === 'tab') {
-    // Tab for autocomplete — handled by the command parser hook
-    return [state, { type: 'command', value: `__autocomplete__${state.commandBuffer}` }]
+  // Arrow keys navigate the palette list
+  if (key === 'up') {
+    return [state, { type: 'scroll', direction: 'up' }]
   }
-  // Regular character
+  if (key === 'down') {
+    return [state, { type: 'scroll', direction: 'down' }]
+  }
+  if (key === 'tab') {
+    return [state, { type: 'scroll', direction: 'down' }]
+  }
   if (key.length === 1) {
     return [{ ...state, commandBuffer: state.commandBuffer + key }, { type: 'none' }]
   }
@@ -206,8 +221,7 @@ function handleSearchMode(state: VimState, key: string): [VimState, VimEffect] {
   return [state, { type: 'none' }]
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function handleInsertMode(state: VimState, _: string): [VimState, VimEffect] {
-  // Insert mode passes all keys through — handled by the component
+function handleInputMode(state: VimState, _: string): [VimState, VimEffect] {
+  // Input mode passes all keys through — handled by the component
   return [state, { type: 'none' }]
 }

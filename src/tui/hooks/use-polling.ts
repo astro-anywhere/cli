@@ -43,13 +43,25 @@ export function usePolling(client: AstroClient, intervalMs = 30000) {
     }
   }, [client])
 
+  const loadUsage = useCallback(async () => {
+    try {
+      const history = await client.getUsageHistory(1)
+      const today = new Date().toISOString().slice(0, 10)
+      const todayEntry = history.find((d) => d.date === today)
+      useTuiStore.getState().setTodayCost(todayEntry?.totalCostUsd ?? 0)
+    } catch {
+      // Usage endpoint may not be available — ignore
+    }
+  }, [client])
+
   const refreshAll = useCallback(async () => {
     await Promise.allSettled([
       loadProjects(),
       loadMachines(),
+      loadUsage(),
       ...(selectedProjectId ? [loadPlan(selectedProjectId)] : []),
     ])
-  }, [loadProjects, loadMachines, loadPlan, selectedProjectId])
+  }, [loadProjects, loadMachines, loadUsage, loadPlan, selectedProjectId])
 
   // Initial load
   useEffect(() => {

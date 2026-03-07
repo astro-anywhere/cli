@@ -4,9 +4,10 @@
 import { create } from 'zustand'
 import type { VimMode } from '../lib/vim-state-machine.js'
 
-export type PanelId = 'projects' | 'plan' | 'machines' | 'output'
+export type PanelId = 'projects' | 'plan' | 'machines' | 'output' | 'chat'
+export type ViewId = 'dashboard' | 'plan-gen' | 'projects' | 'playground' | 'output'
 
-const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output']
+const PANEL_ORDER: PanelId[] = ['projects', 'plan', 'machines', 'output', 'chat']
 
 export interface TuiState {
   // Vim mode
@@ -32,6 +33,7 @@ export interface TuiState {
   showHelp: boolean
   showSearch: boolean
   showDetail: boolean
+  showChat: boolean
   detailType: 'project' | 'node' | 'machine' | 'execution' | null
   detailId: string | null
 
@@ -39,6 +41,12 @@ export interface TuiState {
   connected: boolean
   machineCount: number
   todayCost: number
+
+  // Active view
+  activeView: ViewId
+
+  // Palette selection index
+  paletteIndex: number
 
   // Error
   lastError: string | null
@@ -69,6 +77,7 @@ export interface TuiActions {
 
   toggleHelp: () => void
   toggleSearch: () => void
+  toggleChat: () => void
   openDetail: (type: 'project' | 'node' | 'machine' | 'execution', id: string) => void
   closeDetail: () => void
   closeOverlays: () => void
@@ -76,6 +85,8 @@ export interface TuiActions {
   setConnected: (v: boolean) => void
   setMachineCount: (n: number) => void
   setTodayCost: (n: number) => void
+  setActiveView: (view: ViewId) => void
+  setPaletteIndex: (idx: number) => void
   setLastError: (e: string | null) => void
 }
 
@@ -93,11 +104,12 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   selectedMachineId: null,
   selectedExecutionId: null,
 
-  scrollIndex: { projects: 0, plan: 0, machines: 0, output: 0 },
+  scrollIndex: { projects: 0, plan: 0, machines: 0, output: 0, chat: 0 },
 
   showHelp: false,
   showSearch: false,
   showDetail: false,
+  showChat: false,
   detailType: null,
   detailId: null,
 
@@ -105,10 +117,14 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   machineCount: 0,
   todayCost: 0,
 
+  activeView: 'dashboard',
+
+  paletteIndex: 0,
+
   lastError: null,
 
   setMode: (mode) => set({ mode }),
-  setCommandBuffer: (commandBuffer) => set({ commandBuffer }),
+  setCommandBuffer: (commandBuffer) => set({ commandBuffer, paletteIndex: 0 }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setPendingKeys: (pendingKeys) => set({ pendingKeys }),
 
@@ -182,12 +198,15 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
 
   toggleHelp: () => set((s) => ({ showHelp: !s.showHelp, showSearch: false })),
   toggleSearch: () => set((s) => ({ showSearch: !s.showSearch, showHelp: false })),
+  toggleChat: () => set((s) => ({ showChat: !s.showChat })),
   openDetail: (type, id) => set({ showDetail: true, detailType: type, detailId: id, showHelp: false, showSearch: false }),
   closeDetail: () => set({ showDetail: false, detailType: null, detailId: null }),
-  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, detailType: null, detailId: null }),
+  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, showChat: false, detailType: null, detailId: null }),
 
   setConnected: (connected) => set({ connected }),
   setMachineCount: (machineCount) => set({ machineCount }),
   setTodayCost: (todayCost) => set({ todayCost }),
+  setActiveView: (activeView) => set({ activeView }),
+  setPaletteIndex: (paletteIndex) => set({ paletteIndex }),
   setLastError: (lastError) => set({ lastError }),
 }))

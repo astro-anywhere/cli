@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
-import { getClient } from '../client.js'
+import { getClient, streamDispatchToStdout } from '../client.js'
 import { print, formatRelativeTime, formatStatus, type ColumnDef } from '../output.js'
+import { createApprovalHandler } from '../chat-utils.js'
 import chalk from 'chalk'
 
 const nodeColumns: ColumnDef[] = [
@@ -487,6 +488,55 @@ export function registerPlanCommands(program: Command): void {
         default:
           console.error(chalk.red(`Unknown format "${cmdOpts.format}". Use json, dot, or mermaid.`))
           process.exitCode = 1
+      }
+    })
+
+  // ── plan generate ──────────────────────────────────────────────────
+  plan
+    .command('generate')
+    .description('Generate a plan using AI')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--description <desc>', 'Description of what to plan')
+    .option('--model <model>', 'AI model to use')
+    .option('--provider <provider>', 'Preferred provider ID')
+    .option('--machine <id>', 'Target machine ID')
+    .option('--yolo', 'Auto-approve all approval requests')
+    .action(async (cmdOpts: {
+      projectId: string
+      description: string
+      model?: string
+      provider?: string
+      machine?: string
+      yolo?: boolean
+    }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      console.log(chalk.dim('Generating plan...'))
+      console.log()
+
+      try {
+        const response = await client.dispatchTask({
+          nodeId: `plan-${cmdOpts.projectId}`,
+          projectId: cmdOpts.projectId,
+          isInteractivePlan: true,
+          description: cmdOpts.description,
+          model: cmdOpts.model,
+          preferredProvider: cmdOpts.provider,
+          targetMachineId: cmdOpts.machine,
+        })
+
+        const approvalHandler = createApprovalHandler(client, !!cmdOpts.yolo)
+
+        await streamDispatchToStdout(response, {
+          json: opts.json,
+          onApprovalRequest: approvalHandler,
+        })
+        console.log()
+        console.log(chalk.green('Plan generation complete.'))
+      } catch (err) {
+        console.error(chalk.red(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`))
+        process.exitCode = 1
       }
     })
 }

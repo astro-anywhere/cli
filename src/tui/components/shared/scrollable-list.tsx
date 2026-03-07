@@ -1,5 +1,5 @@
 import React from 'react'
-import { Box, Text } from 'ink'
+import { Box, Text, useStdout } from 'ink'
 
 export interface ListItem {
   id: string
@@ -17,6 +17,9 @@ interface ScrollableListProps {
 }
 
 export function ScrollableList({ items, selectedIndex, height, isFocused }: ScrollableListProps) {
+  const { stdout } = useStdout()
+  const termWidth = stdout?.columns ?? 80
+
   if (items.length === 0) {
     return (
       <Box>
@@ -38,19 +41,28 @@ export function ScrollableList({ items, selectedIndex, height, isFocused }: Scro
       {visibleItems.map((item, i) => {
         const actualIndex = start + i
         const isSelected = actualIndex === selectedIndex && isFocused
+        const prefix = isSelected ? ' \u25B6 ' : '   '
+        const sublabel = item.sublabel ? ` ${item.sublabel}` : ''
+        const rightLabel = item.rightLabel ?? ''
+
+        // Truncate to fit terminal width (approximate, accounting for borders/padding)
+        const maxLabelWidth = Math.max(10, termWidth - prefix.length - sublabel.length - rightLabel.length - 10)
+        const truncatedLabel = item.label.length > maxLabelWidth
+          ? item.label.slice(0, maxLabelWidth - 1) + '\u2026'
+          : item.label
+
         return (
           <Box key={item.id}>
             <Text
               color={isSelected ? 'cyan' : item.color ?? undefined}
               bold={isSelected}
               inverse={isSelected}
+              wrap="truncate"
             >
-              {isSelected ? ' \u25B6 ' : '   '}
-              {item.label}
-              {item.sublabel ? ` ${item.sublabel}` : ''}
+              {prefix}{truncatedLabel}{sublabel}
             </Text>
-            {item.rightLabel && (
-              <Text dimColor> {item.rightLabel}</Text>
+            {rightLabel && (
+              <Text dimColor> {rightLabel}</Text>
             )}
           </Box>
         )

@@ -1,16 +1,19 @@
-import React from 'react'
-import { Box, Text, useInput } from 'ink'
+/**
+ * Search input handler — no visual rendering (rendered inline by CommandLine).
+ * This component only provides the useInput hook for keyboard handling.
+ */
+import { useInput } from 'ink'
 import { useSearchStore } from '../../stores/search-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
-import { getStatusColor } from '../../lib/status-colors.js'
 
 export function SearchOverlay() {
   const isOpen = useSearchStore((s) => s.isOpen)
   const query = useSearchStore((s) => s.query)
   const results = useSearchStore((s) => s.results)
+  const items = useSearchStore((s) => s.items)
   const selectedIndex = useSearchStore((s) => s.selectedIndex)
   const { setQuery, moveUp, moveDown, close } = useSearchStore()
-  const { setSelectedProject, setSelectedNode, setSelectedMachine, focusPanel } = useTuiStore()
+  const { setSelectedProject, setSelectedNode, setSelectedMachine, focusPanel, openDetail } = useTuiStore()
 
   useInput((input, key) => {
     if (!isOpen) return
@@ -25,13 +28,14 @@ export function SearchOverlay() {
       return
     }
 
-    if (key.downArrow) {
+    if (key.downArrow || key.tab) {
       moveDown()
       return
     }
 
-    if (key.return && results.length > 0) {
-      const item = results[selectedIndex]
+    if (key.return) {
+      const displayList = query.length > 0 ? results : items
+      const item = displayList[selectedIndex]
       if (item) {
         switch (item.type) {
           case 'project':
@@ -41,6 +45,7 @@ export function SearchOverlay() {
           case 'task':
             setSelectedNode(item.id)
             focusPanel('plan')
+            openDetail('node', item.id)
             break
           case 'machine':
             setSelectedMachine(item.id)
@@ -62,44 +67,5 @@ export function SearchOverlay() {
     }
   }, { isActive: isOpen })
 
-  if (!isOpen) return null
-
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-      paddingY={0}
-      width="60%"
-      height={Math.min(results.length + 4, 15)}
-    >
-      <Box>
-        <Text bold color="cyan">Search: </Text>
-        <Text>{query}</Text>
-        <Text color="cyan">{'\u2588'}</Text>
-      </Box>
-      <Box flexDirection="column" marginTop={1}>
-        {results.length === 0 && query.length > 0 && (
-          <Text dimColor>  No results</Text>
-        )}
-        {results.slice(0, 10).map((item, i) => (
-          <Box key={item.id}>
-            <Text
-              inverse={i === selectedIndex}
-              bold={i === selectedIndex}
-              color={i === selectedIndex ? 'cyan' : undefined}
-            >
-              {i === selectedIndex ? ' \u25B6 ' : '   '}
-              <Text dimColor>[{item.type}]</Text>
-              {' '}{item.title}
-              {item.status && (
-                <Text color={getStatusColor(item.status)}> [{item.status}]</Text>
-              )}
-            </Text>
-          </Box>
-        ))}
-      </Box>
-    </Box>
-  )
+  return null
 }

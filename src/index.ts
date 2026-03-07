@@ -9,6 +9,7 @@ import { registerEnvCommands } from './commands/env.js'
 import { registerConfigCommands } from './commands/config.js'
 import { registerAuthCommands } from './commands/auth.js'
 import { registerCompletionCommands } from './commands/completion.js'
+import { registerPlaygroundCommands } from './commands/playground.js'
 
 const program = new Command()
 
@@ -30,6 +31,7 @@ registerEnvCommands(program)
 registerConfigCommands(program)
 registerAuthCommands(program)
 registerCompletionCommands(program)
+registerPlaygroundCommands(program)
 
 program
   .command('tui')

@@ -1,7 +1,8 @@
 import type { Command } from 'commander'
-import { getClient } from '../client.js'
-import type { Project } from '../client.js'
+import { getClient, streamChatToStdout } from '../client.js'
+import type { Project, ApprovalRequest } from '../client.js'
 import { print, formatRelativeTime, formatStatus, type ColumnDef } from '../output.js'
+import { loadHistory, saveHistory, createApprovalHandler } from '../chat-utils.js'
 import chalk from 'chalk'
 
 const projectColumns: ColumnDef[] = [
@@ -245,6 +246,92 @@ export function registerProjectCommands(program: Command): void {
         console.log()
       } catch (err) {
         console.error(chalk.red((err as Error).message))
+        process.exitCode = 1
+      }
+    })
+
+  // ── project chat <id> ────────────────────────────────────────────
+  project
+    .command('chat <id>')
+    .description('Chat with AI about a project')
+    .requiredOption('--message <msg>', 'Message to send')
+    .option('--session-id <sid>', 'Resume existing session')
+    .option('--model <model>', 'AI model to use')
+    .option('--provider <provider>', 'Provider ID')
+    .option('--history-file <path>', 'Path to conversation history JSON file')
+    .option('--yolo', 'Auto-approve all approval requests')
+    .action(async (id: string, cmdOpts: {
+      message: string
+      sessionId?: string
+      model?: string
+      provider?: string
+      historyFile?: string
+      yolo?: boolean
+    }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      let p: Project
+      try {
+        p = await client.resolveProject(id)
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exitCode = 1
+        return
+      }
+
+      // Load plan context
+      let planNodes: unknown[] = []
+      let planEdges: unknown[] = []
+      try {
+        const plan = await client.getPlan(p.id)
+        planNodes = plan.nodes.filter(n => !n.deletedAt)
+        planEdges = plan.edges
+      } catch {
+        // Plan context is optional
+      }
+
+      // Load message history
+      let messages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+      if (cmdOpts.historyFile) {
+        messages = loadHistory(cmdOpts.historyFile)
+      }
+
+      try {
+        const response = await client.projectChat({
+          message: cmdOpts.message,
+          projectId: p.id,
+          sessionId: cmdOpts.sessionId,
+          model: cmdOpts.model,
+          providerId: cmdOpts.provider,
+          visionDoc: p.visionDoc || undefined,
+          planNodes,
+          planEdges,
+          messages: messages.length > 0 ? messages : undefined,
+        })
+
+        const approvalHandler = createApprovalHandler(client, !!cmdOpts.yolo)
+
+        const result = await streamChatToStdout(response, {
+          json: opts.json,
+          onApprovalRequest: approvalHandler,
+        })
+
+        // Print session ID for continuation
+        if (result.sessionId) {
+          process.stderr.write(`\n${chalk.dim(`Session: ${result.sessionId}`)}\n`)
+        }
+
+        // Save history
+        if (cmdOpts.historyFile && result.assistantText) {
+          messages.push({ role: 'user', content: cmdOpts.message })
+          messages.push({ role: 'assistant', content: result.assistantText })
+          saveHistory(cmdOpts.historyFile, messages)
+        }
+
+        console.log() // Final newline
+      } catch (err) {
+        console.error(chalk.red(`Chat failed: ${err instanceof Error ? err.message : String(err)}`))
         process.exitCode = 1
       }
     })
