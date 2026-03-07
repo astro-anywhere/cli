@@ -110,18 +110,13 @@ export function App({ serverUrl }: AppProps) {
 
   // Handle messages from the session panel (playground/plan-generate views)
   const onSessionMessage = useCallback(async (message: string) => {
-    const { selectedProjectId, activeView } = useTuiStore.getState()
+    const { selectedProjectId, activeView, selectedNodeId } = useTuiStore.getState()
     if (!selectedProjectId) {
       useTuiStore.getState().setLastError('No project selected')
       return
     }
 
     const watchingId = useExecutionStore.getState().watchingId
-    const sessionId = useChatStore.getState().sessionId
-    const messages = useChatStore.getState().messages.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }))
 
     // If no active execution, start a new one via dispatch
     if (!watchingId) {
@@ -133,63 +128,14 @@ export function App({ serverUrl }: AppProps) {
       return
     }
 
-    // Otherwise, send follow-up via project chat
-    try {
-      useChatStore.getState().setStreaming(true)
-
-      const response = await client.projectChat({
-        message,
-        sessionId: sessionId ?? undefined,
-        projectId: selectedProjectId,
-        messages,
-      })
-
-      if (!response.body) {
-        useChatStore.getState().setStreaming(false)
-        return
-      }
-
-      // Stream the response
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-
-          try {
-            const event = JSON.parse(data)
-            if (event.type === 'text' && event.text) {
-              useChatStore.getState().appendStream(event.text)
-              useExecutionStore.getState().appendText(watchingId, event.text)
-            } else if (event.type === 'session_init' && event.sessionId) {
-              useChatStore.getState().setSessionId(event.sessionId)
-            } else if (event.type === 'done') {
-              // Finalize
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
-      }
-
-      useChatStore.getState().flushStream()
-      useChatStore.getState().setStreaming(false)
-    } catch (err) {
-      useChatStore.getState().setStreaming(false)
-      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    // Otherwise, send follow-up via chat command
+    // Use task chat if a task node is selected, otherwise project chat
+    if (selectedNodeId) {
+      await execute(`task chat ${message}`)
+    } else {
+      await execute(`project chat ${message}`)
     }
-  }, [client, execute])
+  }, [execute])
 
   // Vim mode
   useVimMode({

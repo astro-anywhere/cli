@@ -577,6 +577,43 @@ export class AstroClient {
     return this.post('/api/dispatch/approval', payload)
   }
 
+  // ── Agent Dispatch (direct SSE, for plan generation) ─────────────
+
+  async agentDispatch(payload: {
+    nodeId: string
+    projectId: string
+    isInteractivePlan?: boolean
+    model?: string
+    preferredProvider?: string
+    skipSafetyCheck?: boolean
+    title?: string
+    description?: string
+    deliveryMode?: string
+    [key: string]: unknown
+  }): Promise<Response> {
+    const url = new URL('/api/agent/dispatch', this.baseUrl)
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Agent dispatch failed (${res.status}): ${text}`)
+    }
+    return res
+  }
+
+  // ── Summarize ──────────────────────────────────────────────────────
+
+  async summarize(payload: {
+    executionId: string
+    projectId?: string
+    nodeId?: string
+  }): Promise<{ summary: string }> {
+    return this.post('/api/agent/summarize', payload)
+  }
+
   // ── Slurm Dispatch ────────────────────────────────────────────────
 
   async dispatchSlurmTask(payload: {
@@ -638,7 +675,7 @@ function parseSSELines(buffer: string, lines: string[]): Array<Record<string, un
   return events
 }
 
-async function readSSEStream(response: Response, handler: (event: Record<string, unknown>) => Promise<void> | void): Promise<void> {
+export async function readSSEStream(response: Response, handler: (event: Record<string, unknown>) => Promise<void> | void): Promise<void> {
   if (!response.body) return
 
   const reader = response.body.getReader()

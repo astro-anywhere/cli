@@ -7,6 +7,8 @@ import { usePlanStore } from '../stores/plan-store.js'
 import { useMachinesStore } from '../stores/machines-store.js'
 import { useTuiStore } from '../stores/tui-store.js'
 import { useExecutionStore } from '../stores/execution-store.js'
+import { useChatStore } from '../stores/chat-store.js'
+import { readSSEStream } from '../../client.js'
 
 export type CommandHandler = (args: string[], client: AstroClient) => Promise<void>
 
@@ -35,6 +37,9 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   { name: 'activity', description: 'Show recent activity feed' },
   { name: 'playground', description: 'Start a playground (Cloud Code) session', usage: 'playground <description>' },
   { name: 'plan generate', description: 'Generate a plan using AI', usage: 'plan generate <description>' },
+  { name: 'project chat', description: 'Chat with AI about the selected project', usage: 'project chat <message>' },
+  { name: 'task chat', description: 'Chat with AI about the selected task', usage: 'task chat <message>' },
+  { name: 'summarize', description: 'AI-generated summary of an execution', usage: 'summarize [executionId]' },
   { name: 'refresh', description: 'Refresh all data' },
   { name: 'help', description: 'Toggle keybinding reference' },
   { name: 'quit', description: 'Exit the TUI' },
@@ -301,7 +306,7 @@ export const handlers: Record<string, CommandHandler> = {
     }
   },
 
-  // ── Plan Generate ──
+  // ── Plan Generate (uses /api/agent/dispatch SSE) ──
   'plan generate': async (args, client) => {
     const description = args.join(' ')
     if (!description) {
@@ -315,24 +320,146 @@ export const handlers: Record<string, CommandHandler> = {
     }
 
     const nodeId = `plan-${projectId}`
+    const execId = `plan-${projectId}-${Date.now()}`
+    const title = `Plan: ${description.slice(0, 50)}`
+
+    useExecutionStore.getState().initExecution(execId, nodeId, title)
+    useExecutionStore.getState().setWatching(execId)
+    useTuiStore.getState().setActiveView('plan-gen')
+    useExecutionStore.getState().appendLine(execId, `[progress] Plan generation started`)
 
     try {
-      // POST returns JSON — real-time events come via global SSE stream
-      // Plan refresh is handled by task:plan_result event in use-sse-stream.ts
-      const response = await client.dispatchTask({
+      const response = await client.agentDispatch({
         nodeId,
         projectId,
         isInteractivePlan: true,
         description,
       })
-      const result = await response.json() as { success?: boolean; executionId?: string }
 
-      const execId = result.executionId ?? nodeId
-      const title = `Plan: ${description.slice(0, 50)}`
-      useExecutionStore.getState().initExecution(execId, nodeId, title)
-      useExecutionStore.getState().setWatching(execId)
-      useTuiStore.getState().setActiveView('plan-gen')
-      useExecutionStore.getState().appendLine(execId, `[progress] Plan generation started (${execId})`)
+      await streamSSEToExecution(response, execId, client, projectId)
+    } catch (err) {
+      useExecutionStore.getState().setStatus(execId, 'error')
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  // ── Project Chat (uses /api/agent/project-chat SSE) ──
+  'project chat': async (args, client) => {
+    const message = args.join(' ')
+    if (!message) {
+      useTuiStore.getState().setLastError('Usage: project chat <message>')
+      return
+    }
+    const projectId = useTuiStore.getState().selectedProjectId
+    if (!projectId) {
+      useTuiStore.getState().setLastError('No project selected')
+      return
+    }
+
+    const execId = `chat-project-${projectId}-${Date.now()}`
+    const title = `Chat: ${message.slice(0, 50)}`
+    const sessionId = useChatStore.getState().sessionId
+    const messages = useChatStore.getState().messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    useExecutionStore.getState().initExecution(execId, `chat-${projectId}`, title)
+    useExecutionStore.getState().setWatching(execId)
+    useExecutionStore.getState().appendLine(execId, `> ${message}`)
+    useChatStore.getState().addMessage('user', message)
+
+    try {
+      useChatStore.getState().setStreaming(true)
+      useChatStore.getState().setContext(projectId)
+
+      const { nodes, edges } = await client.getPlan(projectId)
+
+      const response = await client.projectChat({
+        message,
+        sessionId: sessionId ?? undefined,
+        projectId,
+        planNodes: nodes,
+        planEdges: edges,
+        messages,
+      })
+
+      await streamSSEToExecution(response, execId, client, projectId)
+      useChatStore.getState().flushStream()
+      useChatStore.getState().setStreaming(false)
+    } catch (err) {
+      useChatStore.getState().setStreaming(false)
+      useExecutionStore.getState().setStatus(execId, 'error')
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  // ── Task Chat (uses /api/agent/task-chat SSE) ──
+  'task chat': async (args, client) => {
+    const message = args.join(' ')
+    if (!message) {
+      useTuiStore.getState().setLastError('Usage: task chat <message>')
+      return
+    }
+    const projectId = useTuiStore.getState().selectedProjectId
+    const nodeId = useTuiStore.getState().selectedNodeId
+    if (!projectId || !nodeId) {
+      useTuiStore.getState().setLastError('No project/task selected')
+      return
+    }
+
+    const planNode = usePlanStore.getState().nodes.find((n) => n.id === nodeId)
+    const taskTitle = planNode?.title ?? nodeId
+    const execId = `chat-task-${nodeId}-${Date.now()}`
+    const title = `Task Chat: ${taskTitle.slice(0, 40)}`
+    const sessionId = useChatStore.getState().sessionId
+    const messages = useChatStore.getState().messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    useExecutionStore.getState().initExecution(execId, `chat-${nodeId}`, title)
+    useExecutionStore.getState().setWatching(execId)
+    useExecutionStore.getState().appendLine(execId, `> ${message}`)
+    useChatStore.getState().addMessage('user', message)
+
+    try {
+      useChatStore.getState().setStreaming(true)
+      useChatStore.getState().setContext(projectId, nodeId)
+
+      const response = await client.taskChat({
+        message,
+        sessionId: sessionId ?? undefined,
+        nodeId,
+        projectId,
+        taskTitle,
+        taskDescription: planNode?.description,
+        taskOutput: planNode?.executionOutput ?? undefined,
+        branchName: planNode?.branchName ?? undefined,
+        prUrl: planNode?.prUrl ?? undefined,
+        messages,
+      })
+
+      await streamSSEToExecution(response, execId, client, projectId)
+      useChatStore.getState().flushStream()
+      useChatStore.getState().setStreaming(false)
+    } catch (err) {
+      useChatStore.getState().setStreaming(false)
+      useExecutionStore.getState().setStatus(execId, 'error')
+      useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  // ── Summarize ──
+  summarize: async (args, client) => {
+    const executionId = args[0] ?? useExecutionStore.getState().watchingId
+    if (!executionId) {
+      useTuiStore.getState().setLastError('Usage: summarize [executionId]')
+      return
+    }
+    try {
+      const result = await client.summarize({ executionId })
+      useExecutionStore.getState().appendLine(executionId, `\n--- Summary ---\n${result.summary}`)
     } catch (err) {
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
     }
@@ -371,6 +498,87 @@ export const handlers: Record<string, CommandHandler> = {
   },
 }
 
+
+/**
+ * Stream SSE response into an execution store entry.
+ * Handles text, tool_use, file_change, session_init, plan_result, done, error events.
+ */
+async function streamSSEToExecution(response: Response, execId: string, client: AstroClient, projectId?: string) {
+  if (!response.body) {
+    useExecutionStore.getState().setStatus(execId, 'completed')
+    return
+  }
+
+  await readSSEStream(response, async (event) => {
+    const type = event.type as string
+
+    switch (type) {
+      case 'text': {
+        const content = (event.content ?? event.text ?? '') as string
+        if (content) {
+          useExecutionStore.getState().appendText(execId, content)
+          useChatStore.getState().appendStream(content)
+        }
+        break
+      }
+      case 'tool_use':
+        useExecutionStore.getState().appendToolCall(execId, event.name as string)
+        break
+      case 'tool_result':
+        break
+      case 'file_change':
+        useExecutionStore.getState().appendFileChange(
+          execId,
+          event.path as string,
+          event.action as string,
+          event.linesAdded as number | undefined,
+          event.linesRemoved as number | undefined,
+        )
+        break
+      case 'session_init':
+        if (event.sessionId) {
+          useChatStore.getState().setSessionId(event.sessionId as string)
+        }
+        break
+      case 'plan_result':
+        useExecutionStore.getState().appendLine(execId, '[plan] Plan generated — refreshing...')
+        if (projectId) {
+          setTimeout(async () => {
+            try {
+              const { nodes, edges } = await client.getPlan(projectId)
+              usePlanStore.getState().setPlan(projectId, nodes, edges)
+            } catch { /* ignore */ }
+          }, 500)
+        }
+        break
+      case 'approval_request':
+        useExecutionStore.getState().setPendingApproval({
+          requestId: event.requestId as string,
+          question: event.question as string,
+          options: event.options as string[],
+          machineId: event.machineId as string | undefined,
+          taskId: event.taskId as string | undefined,
+        })
+        break
+      case 'done':
+        useExecutionStore.getState().setStatus(execId, 'completed')
+        break
+      case 'error':
+        useExecutionStore.getState().appendLine(execId, `[error] ${event.message as string}`)
+        useExecutionStore.getState().setStatus(execId, 'error')
+        break
+      case 'heartbeat':
+      case 'compaction':
+        break
+    }
+  })
+
+  // If status wasn't set by a done/error event, mark as completed
+  const exec = useExecutionStore.getState().outputs.get(execId)
+  if (exec?.status === 'running') {
+    useExecutionStore.getState().setStatus(execId, 'completed')
+  }
+}
 
 async function refreshAll(client: AstroClient) {
   try {
