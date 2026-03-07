@@ -7,10 +7,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { streamDispatchToStdout, streamChatToStdout, type StreamResult } from '../src/client.js'
 
 /**
- * Create a mock Response with a readable stream from SSE lines.
+ * Create a mock Response with a readable stream from SSE events.
+ * Uses proper SSE format: event: <type>\ndata: <payload>\n\n
+ * For text events, data is raw text. For others, data is JSON (remaining fields after type).
  */
 function mockSSEResponse(events: Array<Record<string, unknown>>): Response {
-  const lines = events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('')
+  const lines = events.map(e => {
+    const { type, ...rest } = e
+    // Text events: data is the raw content string
+    if (type === 'text') {
+      return `event: text\ndata: ${rest.content ?? ''}\n\n`
+    }
+    // Other events: data is the remaining fields as JSON
+    return `event: ${type}\ndata: ${JSON.stringify(rest)}\n\n`
+  }).join('')
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     start(controller) {
@@ -145,7 +155,7 @@ describe('SSE streaming', () => {
       const response = mockSSEResponse(events)
       await streamDispatchToStdout(response, { json: true })
 
-      expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ type: 'text', content: 'hi' }))
+      expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ type: 'text', content: 'hi', text: 'hi' }))
       expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ type: 'done' }))
     })
   })
@@ -240,7 +250,7 @@ describe('SSE streaming', () => {
         { type: 'done' },
       ])
       await streamChatToStdout(response, { json: true })
-      expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ type: 'text', content: 'hello' }))
+      expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ type: 'text', content: 'hello', text: 'hello' }))
       // In json mode, assistantText is not accumulated (stdout.write not called)
       expect(stdoutWrite).not.toHaveBeenCalled()
     })

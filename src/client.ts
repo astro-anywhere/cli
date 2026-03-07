@@ -578,33 +578,6 @@ export class AstroClient {
     return this.post('/api/dispatch/approval', payload)
   }
 
-  // ── Agent Dispatch (direct SSE, for plan generation) ─────────────
-
-  async agentDispatch(payload: {
-    nodeId: string
-    projectId: string
-    isInteractivePlan?: boolean
-    model?: string
-    preferredProvider?: string
-    skipSafetyCheck?: boolean
-    title?: string
-    description?: string
-    deliveryMode?: string
-    [key: string]: unknown
-  }): Promise<Response> {
-    const url = new URL('/api/agent/dispatch', this.baseUrl)
-    const res = await fetch(url.toString(), {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(payload),
-    })
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Agent dispatch failed (${res.status}): ${text}`)
-    }
-    return res
-  }
-
   // ── Summarize ──────────────────────────────────────────────────────
 
   async summarize(payload: {
@@ -660,21 +633,9 @@ export interface StreamOptions {
   json?: boolean
 }
 
-// ── SSE line parser ───────────────────────────────────────────────
-
-function parseSSELines(buffer: string, lines: string[]): Array<Record<string, unknown>> {
-  const events: Array<Record<string, unknown>> = []
-  for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      try {
-        events.push(JSON.parse(line.slice(6)) as Record<string, unknown>)
-      } catch {
-        // Skip non-JSON data lines
-      }
-    }
-  }
-  return events
-}
+// ── SSE stream parser ─────────────────────────────────────────────
+// Properly handles the standard SSE format with event: and data: fields.
+// Matches the frontend's parseSSEStream from sse-parser.ts.
 
 export async function readSSEStream(response: Response, handler: (event: Record<string, unknown>) => Promise<void> | void): Promise<void> {
   if (!response.body) return
@@ -682,6 +643,30 @@ export async function readSSEStream(response: Response, handler: (event: Record<
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let currentEvent = ''
+  let dataLines: string[] = []
+
+  function flushEvent(): Record<string, unknown> | null {
+    if (!currentEvent) return null
+    const data = dataLines.join('\n')
+    const event = currentEvent
+    currentEvent = ''
+    dataLines = []
+
+    // For text events, data is raw text (not JSON)
+    if (event === 'text') {
+      return { type: 'text', content: data, text: data }
+    }
+
+    // For structured events, parse JSON data
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>
+      return { type: event, ...parsed }
+    } catch {
+      // If JSON parse fails, return raw data
+      return { type: event, data }
+    }
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -691,10 +676,26 @@ export async function readSSEStream(response: Response, handler: (event: Record<
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
 
-    for (const event of parseSSELines(buffer, lines)) {
-      await handler(event)
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        // Flush any pending event before starting a new one
+        const pending = flushEvent()
+        if (pending) await handler(pending)
+        currentEvent = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        const value = line.slice(5)
+        dataLines.push(value.startsWith(' ') ? value.slice(1) : value)
+      } else if (line === '') {
+        // Empty line = end of event per SSE spec
+        const pending = flushEvent()
+        if (pending) await handler(pending)
+      }
     }
   }
+
+  // Flush any remaining event
+  const pending = flushEvent()
+  if (pending) await handler(pending)
 }
 
 // ── SSE Stream Helper ──────────────────────────────────────────────
@@ -723,7 +724,7 @@ export async function streamDispatchToStdout(response: Response, opts?: StreamOp
         process.stdout.write((event.content as string) ?? '')
         break
       case 'tool_use':
-        process.stderr.write(`\n[tool] ${event.name}\n`)
+        process.stderr.write(`\n[tool] ${event.toolName ?? event.name}\n`)
         break
       case 'tool_result':
         break
@@ -764,10 +765,11 @@ export async function streamDispatchToStdout(response: Response, opts?: StreamOp
         }
         break
       case 'error':
-        console.error(`\nError: ${event.message}`)
+        console.error(`\nError: ${event.error ?? event.message}`)
         break
       case 'done':
       case 'heartbeat':
+      case 'aborted':
         break
     }
   })
@@ -802,7 +804,7 @@ export async function streamChatToStdout(response: Response, opts?: StreamOption
         assistantText += content
         break
       case 'tool_use':
-        process.stderr.write(`\n[tool] ${event.name}\n`)
+        process.stderr.write(`\n[tool] ${event.toolName ?? event.name}\n`)
         break
       case 'tool_result':
         break

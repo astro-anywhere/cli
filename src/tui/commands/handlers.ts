@@ -159,20 +159,35 @@ export const handlers: Record<string, CommandHandler> = {
       return
     }
 
-    try {
-      // POST returns JSON { success, executionId } — real-time events come via global SSE stream
-      const response = await client.dispatchTask({ nodeId, projectId })
-      const result = await response.json() as { success?: boolean; executionId?: string }
+    // Find a connected machine
+    const machines = useMachinesStore.getState().machines
+    const connectedMachine = machines.find((m) => m.isConnected)
+    if (!connectedMachine) {
+      useTuiStore.getState().setLastError('No connected machines. Start an agent runner first.')
+      return
+    }
 
-      const execId = result.executionId ?? `exec-${Date.now()}`
-      // Try to get title from plan node
-      const planNode = usePlanStore.getState().nodes.find((n) => n.id === nodeId)
-      const title = planNode?.title ?? nodeId
-      useExecutionStore.getState().initExecution(execId, nodeId, title)
-      useExecutionStore.getState().setWatching(execId)
-      useTuiStore.getState().focusPanel('output')
-      useExecutionStore.getState().appendLine(execId, `[progress] Task dispatched (${execId})`)
+    const execId = `exec-${Date.now()}`
+    const planNode = usePlanStore.getState().nodes.find((n) => n.id === nodeId)
+    const title = planNode?.title ?? nodeId
+
+    useExecutionStore.getState().initExecution(execId, nodeId, title)
+    useExecutionStore.getState().setWatching(execId)
+    useTuiStore.getState().focusPanel('output')
+    useExecutionStore.getState().appendLine(execId, `[progress] Dispatching task...`)
+
+    try {
+      // POST /api/dispatch/task returns an SSE stream
+      const response = await client.dispatchTask({
+        nodeId,
+        projectId,
+        targetMachineId: connectedMachine.id,
+      })
+
+      await streamSSEToExecution(response, execId, client, projectId)
     } catch (err) {
+      useExecutionStore.getState().setStatus(execId, 'error')
+      useExecutionStore.getState().appendLine(execId, `[error] ${err instanceof Error ? err.message : String(err)}`)
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
     }
   },
@@ -282,6 +297,14 @@ export const handlers: Record<string, CommandHandler> = {
       return
     }
 
+    // Find a connected machine (required for dispatch routing)
+    const machines = useMachinesStore.getState().machines
+    const connectedMachine = machines.find((m) => m.isConnected)
+    if (!connectedMachine) {
+      useTuiStore.getState().setLastError('No connected machines. Start an agent runner first.')
+      return
+    }
+
     const nodeId = `playground-${projectId}-${Date.now()}`
     const execId = `playground-${Date.now()}`
     const title = `Playground: ${description.slice(0, 50)}`
@@ -294,33 +317,21 @@ export const handlers: Record<string, CommandHandler> = {
     useExecutionStore.getState().appendLine(execId, `[progress] Dispatching playground session...`)
 
     try {
-      // POST returns JSON — real-time events come via global SSE stream
+      // POST /api/dispatch/task returns an SSE stream
       const response = await client.dispatchTask({
         nodeId,
         projectId,
-        skipSafetyCheck: true,
-        description,
         title,
+        description,
+        targetMachineId: connectedMachine.id,
         workingDirectory: process.cwd(),
+        deliveryMode: 'direct',
+        skipSafetyCheck: true,
+        force: true,
       })
-      const result = await response.json() as { success?: boolean; executionId?: string }
 
-      if (result.executionId && result.executionId !== execId) {
-        // Server assigned a different ID — migrate our output to it
-        const current = useExecutionStore.getState().outputs.get(execId)
-        if (current) {
-          useExecutionStore.getState().initExecution(result.executionId, nodeId, title)
-          for (const line of current.lines) {
-            useExecutionStore.getState().appendLine(result.executionId, line)
-          }
-          useExecutionStore.getState().clear(execId)
-          useExecutionStore.getState().setWatching(result.executionId)
-        }
-      }
-      useExecutionStore.getState().appendLine(
-        result.executionId ?? execId,
-        `[progress] Playground session started`,
-      )
+      // Process the SSE stream for real-time output
+      await streamSSEToExecution(response, execId, client, projectId)
     } catch (err) {
       useExecutionStore.getState().setStatus(execId, 'error')
       useExecutionStore.getState().appendLine(execId, `[error] ${err instanceof Error ? err.message : String(err)}`)
@@ -328,7 +339,7 @@ export const handlers: Record<string, CommandHandler> = {
     }
   },
 
-  // ── Plan Generate (uses /api/agent/dispatch SSE) ──
+  // ── Plan Generate (uses /api/dispatch/task SSE with isInteractivePlan) ──
   'plan generate': async (args, client) => {
     const description = args.join(' ')
     if (!description) {
@@ -338,6 +349,14 @@ export const handlers: Record<string, CommandHandler> = {
     const projectId = useTuiStore.getState().selectedProjectId
     if (!projectId) {
       useTuiStore.getState().setLastError('No project selected. Select a project first.')
+      return
+    }
+
+    // Find a connected machine (required for dispatch routing)
+    const machines = useMachinesStore.getState().machines
+    const connectedMachine = machines.find((m) => m.isConnected)
+    if (!connectedMachine) {
+      useTuiStore.getState().setLastError('No connected machines. Start an agent runner first.')
       return
     }
 
@@ -351,11 +370,15 @@ export const handlers: Record<string, CommandHandler> = {
     useExecutionStore.getState().appendLine(execId, `[progress] Plan generation started`)
 
     try {
-      const response = await client.agentDispatch({
+      // POST /api/dispatch/task returns an SSE stream
+      const response = await client.dispatchTask({
         nodeId,
         projectId,
-        isInteractivePlan: true,
+        title: `Interactive planning: ${description.slice(0, 80)}`,
         description,
+        targetMachineId: connectedMachine.id,
+        isInteractivePlan: true,
+        verification: 'human',
       })
 
       await streamSSEToExecution(response, execId, client, projectId)
@@ -535,6 +558,12 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
     const type = event.type as string
 
     switch (type) {
+      case 'init':
+        // Server assigns the real execution ID
+        if (event.executionId) {
+          useExecutionStore.getState().appendLine(execId, `[progress] Execution started (${event.executionId})`)
+        }
+        break
       case 'text': {
         const content = (event.content ?? event.text ?? '') as string
         if (content) {
@@ -544,7 +573,7 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
         break
       }
       case 'tool_use':
-        useExecutionStore.getState().appendToolCall(execId, event.name as string)
+        useExecutionStore.getState().appendToolCall(execId, (event.toolName ?? event.name) as string)
         break
       case 'tool_result':
         break
@@ -556,6 +585,9 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
           event.linesAdded as number | undefined,
           event.linesRemoved as number | undefined,
         )
+        break
+      case 'progress':
+        useExecutionStore.getState().appendLine(execId, `[progress] ${event.message as string}`)
         break
       case 'session_init':
         if (event.sessionId) {
@@ -573,6 +605,13 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
           }, 500)
         }
         break
+      case 'result':
+        // Execution completed — the result event carries status and output
+        useExecutionStore.getState().setStatus(execId, (event.status === 'success') ? 'completed' : 'error')
+        if (event.error) {
+          useExecutionStore.getState().appendLine(execId, `[error] ${event.error as string}`)
+        }
+        break
       case 'approval_request':
         useExecutionStore.getState().setPendingApproval({
           requestId: event.requestId as string,
@@ -585,12 +624,15 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
       case 'done':
         useExecutionStore.getState().setStatus(execId, 'completed')
         break
-      case 'error':
-        useExecutionStore.getState().appendLine(execId, `[error] ${event.message as string}`)
+      case 'error': {
+        const msg = (event.error ?? event.message ?? 'Unknown error') as string
+        useExecutionStore.getState().appendLine(execId, `[error] ${msg}`)
         useExecutionStore.getState().setStatus(execId, 'error')
         break
+      }
       case 'heartbeat':
       case 'compaction':
+      case 'aborted':
         break
     }
   })

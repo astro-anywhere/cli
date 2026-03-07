@@ -519,8 +519,10 @@ export function registerPlanCommands(program: Command): void {
         const response = await client.dispatchTask({
           nodeId: `plan-${cmdOpts.projectId}`,
           projectId: cmdOpts.projectId,
+          title: `Interactive planning: ${cmdOpts.description.slice(0, 80)}`,
           isInteractivePlan: true,
           description: cmdOpts.description,
+          verification: 'human',
           model: cmdOpts.model,
           preferredProvider: cmdOpts.provider,
           targetMachineId: cmdOpts.machine,
