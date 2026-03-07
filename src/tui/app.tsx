@@ -9,6 +9,7 @@ import { useCommandParser } from './hooks/use-command-parser.js'
 import { useTuiStore } from './stores/tui-store.js'
 import { useProjectsStore } from './stores/projects-store.js'
 import { usePlanStore } from './stores/plan-store.js'
+import { getVisibleProjects } from './lib/format.js'
 import { useSearchStore } from './stores/search-store.js'
 import { useExecutionStore } from './stores/execution-store.js'
 import { useChatStore } from './stores/chat-store.js'
@@ -38,7 +39,7 @@ export function App({ serverUrl }: AppProps) {
 
     switch (focusedPanel) {
       case 'projects': {
-        const projects = useProjectsStore.getState().projects
+        const projects = getVisibleProjects(useProjectsStore.getState().projects)
         const idx = scrollIndex.projects
         if (projects[idx]) {
           useTuiStore.getState().setSelectedProject(projects[idx].id)

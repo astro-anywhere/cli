@@ -68,6 +68,15 @@ export function usePolling(client: AstroClient, intervalMs = 10000) {
     }
   }, [client])
 
+  const loadAllPlans = useCallback(async () => {
+    try {
+      const { nodes, edges } = await client.getFullPlan()
+      usePlanStore.getState().setAllPlans(nodes, edges)
+    } catch {
+      // Full plan endpoint may not be available — fall back to per-project
+    }
+  }, [client])
+
   const loadMachines = useCallback(async () => {
     useMachinesStore.getState().setLoading(true)
     try {
@@ -118,23 +127,23 @@ export function usePolling(client: AstroClient, intervalMs = 10000) {
       loadMachines(),
       loadExecutions(),
       loadUsage(),
-      ...(selectedProjectId ? [loadPlan(selectedProjectId)] : []),
+      loadAllPlans(),
     ])
-  }, [loadProjects, loadMachines, loadExecutions, loadUsage, loadPlan, selectedProjectId])
+  }, [loadProjects, loadMachines, loadExecutions, loadUsage, loadAllPlans])
 
   // Initial load
   useEffect(() => {
     refreshAll()
   }, [refreshAll])
 
-  // Load plan when selected project changes
+  // Switch plan view when selected project changes (instant from cache)
   useEffect(() => {
     if (selectedProjectId) {
-      loadPlan(selectedProjectId)
+      usePlanStore.getState().selectProject(selectedProjectId)
     } else {
       usePlanStore.getState().clear()
     }
-  }, [selectedProjectId, loadPlan])
+  }, [selectedProjectId])
 
   // Periodic refresh
   useEffect(() => {
@@ -142,5 +151,5 @@ export function usePolling(client: AstroClient, intervalMs = 10000) {
     return () => clearInterval(timer)
   }, [refreshAll, intervalMs])
 
-  return { refreshAll, loadProjects, loadPlan, loadMachines }
+  return { refreshAll, loadProjects, loadPlan, loadAllPlans, loadMachines }
 }

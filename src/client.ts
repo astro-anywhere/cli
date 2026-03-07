@@ -11,6 +11,7 @@ export interface Project {
   workingDirectory: string | null
   repository: string | null
   deliveryMode: string | null
+  projectType: string | null
   health: string | null
   progress: number
   startDate: string | null

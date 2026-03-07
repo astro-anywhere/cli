@@ -283,6 +283,15 @@ export const handlers: Record<string, CommandHandler> = {
     }
 
     const nodeId = `playground-${projectId}-${Date.now()}`
+    const execId = `playground-${Date.now()}`
+    const title = `Playground: ${description.slice(0, 50)}`
+
+    // Show immediate feedback
+    useExecutionStore.getState().initExecution(execId, nodeId, title)
+    useExecutionStore.getState().setWatching(execId)
+    useTuiStore.getState().setActiveView('playground')
+    useExecutionStore.getState().appendLine(execId, `> ${description}`)
+    useExecutionStore.getState().appendLine(execId, `[progress] Dispatching playground session...`)
 
     try {
       // POST returns JSON — real-time events come via global SSE stream
@@ -291,17 +300,30 @@ export const handlers: Record<string, CommandHandler> = {
         projectId,
         skipSafetyCheck: true,
         description,
-        title: `Playground: ${description.slice(0, 50)}`,
+        title,
+        workingDirectory: process.cwd(),
       })
       const result = await response.json() as { success?: boolean; executionId?: string }
 
-      const execId = result.executionId ?? nodeId
-      const title = `Playground: ${description.slice(0, 50)}`
-      useExecutionStore.getState().initExecution(execId, nodeId, title)
-      useExecutionStore.getState().setWatching(execId)
-      useTuiStore.getState().setActiveView('playground')
-      useExecutionStore.getState().appendLine(execId, `[progress] Playground session started (${execId})`)
+      if (result.executionId && result.executionId !== execId) {
+        // Server assigned a different ID — migrate our output to it
+        const current = useExecutionStore.getState().outputs.get(execId)
+        if (current) {
+          useExecutionStore.getState().initExecution(result.executionId, nodeId, title)
+          for (const line of current.lines) {
+            useExecutionStore.getState().appendLine(result.executionId, line)
+          }
+          useExecutionStore.getState().clear(execId)
+          useExecutionStore.getState().setWatching(result.executionId)
+        }
+      }
+      useExecutionStore.getState().appendLine(
+        result.executionId ?? execId,
+        `[progress] Playground session started`,
+      )
     } catch (err) {
+      useExecutionStore.getState().setStatus(execId, 'error')
+      useExecutionStore.getState().appendLine(execId, `[error] ${err instanceof Error ? err.message : String(err)}`)
       useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
     }
   },
@@ -582,19 +604,15 @@ async function streamSSEToExecution(response: Response, execId: string, client: 
 
 async function refreshAll(client: AstroClient) {
   try {
-    const [projects, machines] = await Promise.all([
+    const [projects, machines, fullPlan] = await Promise.all([
       client.listProjects(),
       client.listMachines(),
+      client.getFullPlan(),
     ])
     useProjectsStore.getState().setProjects(projects)
     useMachinesStore.getState().setMachines(machines)
     useTuiStore.getState().setMachineCount(machines.filter((m) => m.isConnected).length)
-
-    const projectId = useTuiStore.getState().selectedProjectId
-    if (projectId) {
-      const { nodes, edges } = await client.getPlan(projectId)
-      usePlanStore.getState().setPlan(projectId, nodes, edges)
-    }
+    usePlanStore.getState().setAllPlans(fullPlan.nodes, fullPlan.edges)
   } catch (err) {
     useTuiStore.getState().setLastError(err instanceof Error ? err.message : String(err))
   }

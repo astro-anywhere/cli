@@ -105,9 +105,16 @@ export function SessionPanel({ height, title, sessionType, onSubmit }: SessionPa
                   onSubmit={(value) => {
                     if (value.trim()) {
                       const msg = value.trim()
-                      // Show user message in output
+                      // Show user message in output immediately for feedback
                       if (watchingId) {
                         useExecutionStore.getState().appendLine(watchingId, `> ${msg}`)
+                      } else {
+                        // No execution yet — create a temporary placeholder so user sees their input
+                        const tmpId = `pending-${Date.now()}`
+                        useExecutionStore.getState().initExecution(tmpId, tmpId, `${sessionType === 'playground' ? 'Playground' : 'Plan'}: ${msg.slice(0, 50)}`)
+                        useExecutionStore.getState().setWatching(tmpId)
+                        useExecutionStore.getState().appendLine(tmpId, `> ${msg}`)
+                        useExecutionStore.getState().appendLine(tmpId, '[progress] Starting...')
                       }
                       useChatStore.getState().addMessage('user', msg)
                       onSubmit?.(msg)

@@ -14,7 +14,9 @@ import { useInput, useApp } from 'ink'
 import { initialVimState, vimReducer, type VimState, type VimEffect } from '../lib/vim-state-machine.js'
 import { useTuiStore } from '../stores/tui-store.js'
 import { useSearchStore } from '../stores/search-store.js'
+import { useProjectsStore } from '../stores/projects-store.js'
 import { getFilteredPaletteCommands } from '../commands/palette-filter.js'
+import { getVisibleProjects } from '../lib/format.js'
 
 export interface VimModeCallbacks {
   onCommand?: (command: string) => void
@@ -53,6 +55,15 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
             case 'bottom': store.scrollToBottom(); break
             case 'page_up': store.pageUp(); break
             case 'page_down': store.pageDown(); break
+          }
+          // Auto-select project on cursor move (like frontend sidebar click)
+          // Must use getState() to read the freshly-updated scroll index
+          if (store.focusedPanel === 'projects') {
+            const sorted = getVisibleProjects(useProjectsStore.getState().projects)
+            const idx = useTuiStore.getState().scrollIndex.projects
+            if (sorted[idx]) {
+              useTuiStore.getState().setSelectedProject(sorted[idx].id)
+            }
           }
           break
 

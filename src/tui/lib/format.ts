@@ -47,3 +47,17 @@ export function truncate(str: string, maxLen: number): string {
 export function padRight(str: string, len: number): string {
   return str.length >= len ? str.slice(0, len) : str + ' '.repeat(len - str.length)
 }
+
+/**
+ * Get the visible project list: filter out playground projects, sort by updatedAt descending.
+ * Shared between projects-panel, app onSelect, and vim-mode auto-select.
+ */
+export function getVisibleProjects<T extends { updatedAt: string; projectType?: string | null; [k: string]: unknown }>(projects: T[]): T[] {
+  return projects
+    .filter((p) => p.projectType !== 'playground')
+    .sort((a, b) => {
+      const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+      const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+      return tb - ta
+    })
+}

@@ -1,10 +1,17 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { Panel } from '../layout/panel.js'
 import { Spinner } from '../shared/spinner.js'
 import { useProjectsStore } from '../../stores/projects-store.js'
+import { useExecutionStore } from '../../stores/execution-store.js'
+import { usePlanStore } from '../../stores/plan-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
-import { formatRelativeTime, truncate } from '../../lib/format.js'
+import { formatRelativeTime, truncate, getVisibleProjects } from '../../lib/format.js'
+
+/** Node statuses where execution has finished */
+const TERMINAL_NODE_STATUSES = new Set([
+  'completed', 'auto_verified', 'awaiting_judgment', 'awaiting_approval', 'pruned',
+])
 
 interface ProjectsPanelProps {
   height: number
@@ -18,15 +25,49 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
   const scrollIndex = useTuiStore((s) => s.scrollIndex.projects)
   const selectedProjectId = useTuiStore((s) => s.selectedProjectId)
 
+  const outputs = useExecutionStore((s) => s.outputs)
+  const planNodes = usePlanStore((s) => s.nodes)
+
   const isFocused = focusedPanel === 'projects'
   const visibleHeight = Math.max(1, height - 3)
 
-  // Sort by updatedAt descending (most recent activity first)
-  const sorted = [...projects].sort((a, b) => {
-    const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
-    const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
-    return tb - ta
-  })
+  // Compute which projects have running work (matches frontend sidebar logic)
+  const projectsWithRunning = useMemo(() => {
+    const running = new Set<string>()
+
+    // Running executions
+    for (const [, exec] of outputs) {
+      if (exec.status !== 'running' && exec.status !== 'pending' && exec.status !== 'dispatched') continue
+      // Extract projectId from nodeId patterns
+      const nodeId = exec.nodeId
+      if (nodeId.startsWith('plan-')) {
+        running.add(nodeId.replace(/^plan-/, '').replace(/-\d+$/, ''))
+      } else if (nodeId.startsWith('playground-')) {
+        const parts = nodeId.replace(/^playground-/, '').split('-')
+        parts.pop()
+        running.add(parts.join('-'))
+      } else if (nodeId.startsWith('chat-')) {
+        running.add(nodeId.replace(/^chat-(project-|task-)?/, '').replace(/-\d+$/, ''))
+      } else {
+        const node = planNodes.find((n) => n.id === nodeId)
+        if (node && !TERMINAL_NODE_STATUSES.has(node.status)) {
+          running.add(node.projectId)
+        }
+      }
+    }
+
+    // In-progress/dispatched nodes without execution records
+    for (const node of planNodes) {
+      if ((node.status === 'in_progress' || node.status === 'dispatched') && !node.deletedAt) {
+        running.add(node.projectId)
+      }
+    }
+
+    return running
+  }, [outputs, planNodes])
+
+  // Filter out playground projects, sort by updatedAt descending
+  const sorted = getVisibleProjects(projects)
 
   const projectCount = sorted.length
   const maxIndex = Math.max(0, projectCount - 1)
@@ -67,6 +108,7 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
             const actualIndex = start + i
             const isSelected = isFocused && cursor === actualIndex
             const isActive = p.id === selectedProjectId
+            const hasRunning = projectsWithRunning.has(p.id)
             return (
               <Box key={p.id}>
                 <Text
@@ -76,7 +118,8 @@ export function ProjectsPanel({ height }: ProjectsPanelProps) {
                   wrap="truncate"
                 >
                   {isSelected ? ' > ' : '   '}
-                  {truncate(p.name, 30)}
+                  {hasRunning ? '\u25B6 ' : '  '}
+                  {truncate(p.name, 28)}
                 </Text>
                 <Text dimColor={!isSelected}> {formatRelativeTime(p.updatedAt)}</Text>
               </Box>
