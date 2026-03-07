@@ -150,9 +150,10 @@ function handleNormalMode(
 
     // View switch by number
     case '1': return [state, { type: 'view', value: 'dashboard' }]
-    case '2': return [state, { type: 'view', value: 'projects' }]
-    case '3': return [state, { type: 'view', value: 'playground' }]
-    case '4': return [state, { type: 'view', value: 'output' }]
+    case '2': return [state, { type: 'view', value: 'plan-gen' }]
+    case '3': return [state, { type: 'view', value: 'projects' }]
+    case '4': return [state, { type: 'view', value: 'playground' }]
+    case '5': return [state, { type: 'view', value: 'output' }]
 
     // Function-key style shortcuts (single letter, no prefix needed)
     case 'd': return [state, { type: 'dispatch' }]

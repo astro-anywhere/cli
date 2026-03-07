@@ -73,7 +73,15 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
   // View-specific content
   let content: React.ReactNode
 
-  if (activeView === 'projects') {
+  if (activeView === 'plan-gen') {
+    content = (
+      <Box flexDirection="row" height={contentHeight}>
+        <Box flexGrow={1}>
+          <SessionPanel height={contentHeight} title="PLAN GENERATION" sessionType="plan-generate" onSubmit={onSessionMessage} />
+        </Box>
+      </Box>
+    )
+  } else if (activeView === 'projects') {
     content = (
       <Box flexDirection="row" height={contentHeight}>
         <Box width="40%">

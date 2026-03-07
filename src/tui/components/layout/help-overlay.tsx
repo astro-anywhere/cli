@@ -15,9 +15,10 @@ const KEYBINDINGS = [
   ]],
   ['Views', [
     ['1', 'Dashboard (default)'],
-    ['2', 'Projects & Plan'],
-    ['3', 'Playground (full output)'],
-    ['4', 'Output (full output)'],
+    ['2', 'Plan Generation'],
+    ['3', 'Projects & Plan'],
+    ['4', 'Playground'],
+    ['5', 'Output'],
   ]],
   ['Shortcuts', [
     ['Ctrl+P / :', 'Open command palette (searchable)'],

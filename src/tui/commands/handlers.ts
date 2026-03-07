@@ -352,7 +352,7 @@ export const handlers: Record<string, CommandHandler> = {
 
       useExecutionStore.getState().initExecution(nodeId, nodeId)
       useExecutionStore.getState().setWatching(nodeId)
-      useTuiStore.getState().setActiveView('playground')
+      useTuiStore.getState().setActiveView('plan-gen')
 
       await streamExecution(nodeId, response)
 

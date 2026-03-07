@@ -122,7 +122,7 @@ describe('vim-state-machine', () => {
     })
 
     it.each([
-      ['1', 'dashboard'], ['2', 'projects'], ['3', 'playground'], ['4', 'output'],
+      ['1', 'dashboard'], ['2', 'plan-gen'], ['3', 'projects'], ['4', 'playground'], ['5', 'output'],
     ])('number key %s switches to view %s', (k, view) => {
       const [, e] = vimReducer(initialVimState(), key(k))
       expect(e).toEqual({ type: 'view', value: view })

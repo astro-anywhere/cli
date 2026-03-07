@@ -68,7 +68,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
         case 'select': {
           const view = store.activeView
           // In session views, Enter activates input mode
-          if (view === 'playground' || view === 'output') {
+          if (view === 'playground' || view === 'plan-gen' || view === 'output') {
             vimState.current = { ...vimState.current, mode: 'input' }
             store.setMode('input')
           } else {
@@ -128,7 +128,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
           break
 
         case 'view':
-          if (effect.value === 'dashboard' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'output') {
+          if (effect.value === 'dashboard' || effect.value === 'plan-gen' || effect.value === 'projects' || effect.value === 'playground' || effect.value === 'output') {
             store.setActiveView(effect.value)
           }
           break

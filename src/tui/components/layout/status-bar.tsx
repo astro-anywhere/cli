@@ -5,6 +5,7 @@ import { formatCost } from '../../lib/format.js'
 
 const VIEW_LABELS: Record<ViewId, string> = {
   dashboard: 'Dashboard',
+  'plan-gen': 'Plan',
   projects: 'Projects',
   playground: 'Playground',
   output: 'Output',

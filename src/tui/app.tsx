@@ -125,10 +125,10 @@ export function App({ serverUrl }: AppProps) {
 
     // If no active execution, start a new one via dispatch
     if (!watchingId) {
-      if (activeView === 'playground') {
-        await execute(`playground ${message}`)
-      } else {
+      if (activeView === 'plan-gen') {
         await execute(`plan generate ${message}`)
+      } else {
+        await execute(`playground ${message}`)
       }
       return
     }

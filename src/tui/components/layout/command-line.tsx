@@ -6,9 +6,10 @@ import { getFilteredPaletteCommands } from '../../commands/palette-filter.js'
 // htop-style shortcut bar items
 const SHORTCUTS = [
   { key: '1', label: 'Dashboard' },
-  { key: '2', label: 'Projects' },
-  { key: '3', label: 'Playground' },
-  { key: '4', label: 'Output' },
+  { key: '2', label: 'Plan' },
+  { key: '3', label: 'Projects' },
+  { key: '4', label: 'Playground' },
+  { key: '5', label: 'Output' },
   { key: 'C-p', label: 'Commands' },
   { key: 'd', label: 'Dispatch' },
   { key: '?', label: 'Help' },
