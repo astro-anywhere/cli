@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, useEffect } from 'react'
 import { MainLayout } from './components/layout/main-layout.js'
 import { AstroClient } from '../client.js'
 import { useVimMode } from './hooks/use-vim-mode.js'
@@ -13,6 +13,8 @@ import { getVisibleProjects } from './lib/format.js'
 import { useSearchStore } from './stores/search-store.js'
 import { useExecutionStore } from './stores/execution-store.js'
 import { useChatStore } from './stores/chat-store.js'
+import { useMachinesStore } from './stores/machines-store.js'
+import { useSessionSettingsStore } from './stores/session-settings-store.js'
 
 interface AppProps {
   serverUrl?: string
@@ -29,6 +31,20 @@ export function App({ serverUrl }: AppProps) {
 
   // Fuzzy search
   useFuzzySearch()
+
+  // Auto-initialize session settings with first connected machine
+  const machines = useMachinesStore((s) => s.machines)
+  useEffect(() => {
+    const settings = useSessionSettingsStore.getState()
+    if (settings.machineId) return // Already initialized
+    const localPlatform = process.platform
+    const m =
+      machines.find((m) => m.isConnected && m.platform === localPlatform) ??
+      machines.find((m) => m.isConnected)
+    if (m) {
+      settings.init(m.id, m.name, process.cwd())
+    }
+  }, [machines])
 
   // Command parser
   const { execute } = useCommandParser(client)
@@ -112,16 +128,18 @@ export function App({ serverUrl }: AppProps) {
   // Handle messages from the session panel (playground/plan-generate views)
   const onSessionMessage = useCallback(async (message: string) => {
     const { selectedProjectId, activeView, selectedNodeId } = useTuiStore.getState()
-    if (!selectedProjectId) {
-      useTuiStore.getState().setLastError('No project selected')
-      return
-    }
-
     const watchingId = useExecutionStore.getState().watchingId
 
     // If no active execution, start a new one via dispatch
     if (!watchingId) {
-      if (activeView === 'plan-gen') {
+      if (activeView === 'playground') {
+        // Playground creates its own project — no selection needed
+        await execute(`playground ${message}`)
+      } else if (activeView === 'plan-gen') {
+        if (!selectedProjectId) {
+          useTuiStore.getState().setLastError('No project selected for plan generation')
+          return
+        }
         await execute(`plan generate ${message}`)
       } else {
         await execute(`playground ${message}`)
@@ -130,6 +148,10 @@ export function App({ serverUrl }: AppProps) {
     }
 
     // Otherwise, send follow-up via chat command
+    if (!selectedProjectId) {
+      useTuiStore.getState().setLastError('No project selected')
+      return
+    }
     // Use task chat if a task node is selected, otherwise project chat
     if (selectedNodeId) {
       await execute(`task chat ${message}`)

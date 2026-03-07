@@ -15,6 +15,8 @@ import { initialVimState, vimReducer, type VimState, type VimEffect } from '../l
 import { useTuiStore } from '../stores/tui-store.js'
 import { useSearchStore } from '../stores/search-store.js'
 import { useProjectsStore } from '../stores/projects-store.js'
+import { useMachinesStore } from '../stores/machines-store.js'
+import { useSessionSettingsStore } from '../stores/session-settings-store.js'
 import { getFilteredPaletteCommands } from '../commands/palette-filter.js'
 import { getVisibleProjects } from '../lib/format.js'
 
@@ -166,6 +168,76 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
         store.setPendingKeys('')
       }
       return
+    }
+
+    // ── Session settings navigation (playground / plan-gen) ──
+    // When in input mode on session views, intercept arrow keys for settings fields
+    const isSessionView = store.activeView === 'playground' || store.activeView === 'plan-gen'
+    if (isSessionView && vimState.current.mode === 'input') {
+      const settings = useSessionSettingsStore.getState()
+
+      if (key.escape) {
+        // Escape: close picker or unfocus field or exit input mode
+        if (settings.pickerOpen) {
+          settings.setPickerOpen(false)
+          return
+        }
+        if (settings.focusedField) {
+          settings.setFocusedField(null)
+          return
+        }
+        // Fall through to normal escape handling below
+      }
+
+      if (settings.pickerOpen && settings.focusedField === 'machine') {
+        // Machine picker is open — arrow keys select, Enter confirms
+        const machines = useMachinesStore.getState().machines.filter((m) => m.isConnected)
+        const currentIdx = machines.findIndex((m) => m.id === settings.machineId)
+        if (key.upArrow) {
+          const newIdx = Math.max(0, currentIdx - 1)
+          if (machines[newIdx]) settings.setMachine(machines[newIdx].id, machines[newIdx].name)
+          return
+        }
+        if (key.downArrow) {
+          const newIdx = Math.min(machines.length - 1, currentIdx + 1)
+          if (machines[newIdx]) settings.setMachine(machines[newIdx].id, machines[newIdx].name)
+          return
+        }
+        if (key.return) {
+          settings.setPickerOpen(false)
+          return
+        }
+        return
+      }
+
+      if (settings.pickerOpen && settings.focusedField === 'workdir') {
+        // Workdir editor is open — TextInput handles keys, only intercept escape
+        return
+      }
+
+      if (settings.focusedField) {
+        // A settings field is focused but picker is not open
+        if (key.return) {
+          settings.setPickerOpen(true)
+          return
+        }
+        if (key.leftArrow || key.rightArrow) {
+          settings.setFocusedField(settings.focusedField === 'machine' ? 'workdir' : 'machine')
+          return
+        }
+        if (key.downArrow) {
+          settings.setFocusedField(null)
+          return
+        }
+        if (key.upArrow) return // Already at top
+        // Fall through for other keys
+      }
+
+      if (!settings.focusedField && key.upArrow) {
+        // From input area, up arrow moves to settings bar
+        settings.setFocusedField('machine')
+        return
+      }
     }
 
     // Map Ink key events to our key string format

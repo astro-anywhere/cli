@@ -8,6 +8,7 @@ import { useMachinesStore } from '../stores/machines-store.js'
 import { useTuiStore } from '../stores/tui-store.js'
 import { useExecutionStore } from '../stores/execution-store.js'
 import { useChatStore } from '../stores/chat-store.js'
+import { useSessionSettingsStore } from '../stores/session-settings-store.js'
 import { readSSEStream } from '../../client.js'
 
 export type CommandHandler = (args: string[], client: AstroClient) => Promise<void>
@@ -285,53 +286,80 @@ export const handlers: Record<string, CommandHandler> = {
   },
 
   // ── Playground ──
+  // Matches frontend: creates a new playground project, then dispatches.
+  // No project selection required — uses session settings for machine + workdir.
   playground: async (args, client) => {
     const description = args.join(' ')
     if (!description) {
       useTuiStore.getState().setLastError('Usage: playground <description>')
       return
     }
-    const projectId = useTuiStore.getState().selectedProjectId
-    if (!projectId) {
-      useTuiStore.getState().setLastError('No project selected. Select a project first.')
-      return
+
+    // Use session settings (user-configurable machine + working directory)
+    const settings = useSessionSettingsStore.getState()
+
+    // Auto-initialize machine if not set yet
+    if (!settings.machineId) {
+      const machines = useMachinesStore.getState().machines
+      const localPlatform = process.platform
+      const m =
+        machines.find((m) => m.isConnected && m.platform === localPlatform) ??
+        machines.find((m) => m.isConnected)
+      if (m) {
+        settings.init(m.id, m.name, settings.workingDirectory || process.cwd())
+      }
     }
 
-    // Find a connected machine (required for dispatch routing)
-    const machines = useMachinesStore.getState().machines
-    const connectedMachine = machines.find((m) => m.isConnected)
-    if (!connectedMachine) {
+    const targetMachineId = settings.machineId
+    const targetMachineName = settings.machineName
+    const workDir = settings.workingDirectory || process.cwd()
+
+    if (!targetMachineId) {
       useTuiStore.getState().setLastError('No connected machines. Start an agent runner first.')
       return
     }
 
-    const nodeId = `playground-${projectId}-${Date.now()}`
     const execId = `playground-${Date.now()}`
     const title = `Playground: ${description.slice(0, 50)}`
 
     // Show immediate feedback
-    useExecutionStore.getState().initExecution(execId, nodeId, title)
+    useExecutionStore.getState().initExecution(execId, execId, title)
     useExecutionStore.getState().setWatching(execId)
     useTuiStore.getState().setActiveView('playground')
     useExecutionStore.getState().appendLine(execId, `> ${description}`)
-    useExecutionStore.getState().appendLine(execId, `[progress] Dispatching playground session...`)
+    useExecutionStore.getState().appendLine(execId, `[progress] Creating playground session...`)
 
     try {
-      // POST /api/dispatch/task returns an SSE stream
+      // 1. Create a playground project (matches frontend startPlaygroundSession)
+      const projectId = crypto.randomUUID()
+      const project = await client.createProject({
+        id: projectId,
+        name: description.slice(0, 60) || 'Playground Session',
+        description,
+        workingDirectory: workDir,
+        defaultMachineId: targetMachineId,
+        projectType: 'playground',
+      })
+
+      const nodeId = `playground-${project.id}`
+
+      useExecutionStore.getState().appendLine(execId, `[progress] Dispatching to ${targetMachineName ?? targetMachineId} (${workDir})...`)
+
+      // 2. Dispatch the task
       const response = await client.dispatchTask({
         nodeId,
-        projectId,
+        projectId: project.id,
         title,
         description,
-        targetMachineId: connectedMachine.id,
-        workingDirectory: process.cwd(),
+        targetMachineId,
+        workingDirectory: workDir,
         deliveryMode: 'direct',
         skipSafetyCheck: true,
         force: true,
       })
 
-      // Process the SSE stream for real-time output
-      await streamSSEToExecution(response, execId, client, projectId)
+      // 3. Process SSE stream
+      await streamSSEToExecution(response, execId, client, project.id)
     } catch (err) {
       useExecutionStore.getState().setStatus(execId, 'error')
       useExecutionStore.getState().appendLine(execId, `[error] ${err instanceof Error ? err.message : String(err)}`)

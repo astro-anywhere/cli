@@ -274,7 +274,16 @@ export class AstroClient {
     return this.get(`/api/data/projects/${id}`)
   }
 
-  async createProject(data: { name: string; description?: string; workingDirectory?: string }): Promise<Project> {
+  async createProject(data: {
+    id?: string
+    name: string
+    description?: string
+    workingDirectory?: string
+    defaultMachineId?: string
+    projectType?: string
+    deliveryMode?: string
+    [key: string]: unknown
+  }): Promise<Project> {
     return this.post('/api/data/projects', data)
   }
 
