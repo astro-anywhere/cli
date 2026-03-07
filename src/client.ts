@@ -9,7 +9,6 @@ export interface Project {
   visionDoc: string
   status: string
   workingDirectory: string | null
-  sourceDirectory: string | null
   repository: string | null
   deliveryMode: string | null
   health: string | null

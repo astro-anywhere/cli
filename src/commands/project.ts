@@ -56,7 +56,6 @@ export function registerProjectCommands(program: Command): void {
         ['Status', formatStatus(p.status)],
         ['Description', p.description || chalk.dim('\u2014')],
         ['Working Directory', p.workingDirectory || chalk.dim('\u2014')],
-        ['Source Directory', p.sourceDirectory || chalk.dim('\u2014')],
         ['Repository', p.repository || chalk.dim('\u2014')],
         ['Delivery Mode', p.deliveryMode || chalk.dim('\u2014')],
         ['Health', p.health || chalk.dim('\u2014')],
