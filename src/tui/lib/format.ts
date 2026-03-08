@@ -40,8 +40,9 @@ export function formatCost(usd: number | null | undefined): string {
 }
 
 export function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str
-  return str.slice(0, maxLen - 1) + '\u2026'
+  const clean = str.replace(/[\r\n]+/g, ' ').trim()
+  if (clean.length <= maxLen) return clean
+  return clean.slice(0, maxLen - 1) + '\u2026'
 }
 
 export function padRight(str: string, len: number): string {
