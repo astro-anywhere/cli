@@ -6,7 +6,7 @@ import { Spinner } from '../shared/spinner.js'
 import { usePlanStore } from '../../stores/plan-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
 import { useProjectsStore } from '../../stores/projects-store.js'
-import { useSessionSettingsStore } from '../../stores/session-settings-store.js'
+import { useMachinesStore } from '../../stores/machines-store.js'
 import { getStatusColor, getStatusSymbol } from '../../lib/status-colors.js'
 import { truncate } from '../../lib/format.js'
 
@@ -28,7 +28,10 @@ export function PlanPanel({ height }: PlanPanelProps) {
   const project = projects.find((p) => p.id === selectedProjectId)
   const projectName = project?.name ?? 'none'
   const workDir = project?.workingDirectory ?? null
-  const { machineId, machineName } = useSessionSettingsStore()
+  const defaultMachineId = project?.defaultMachineId ?? null
+  const machines = useMachinesStore((s) => s.machines)
+  const machine = defaultMachineId ? machines.find((m) => m.id === defaultMachineId) : null
+  const machineName = machine?.name ?? (defaultMachineId?.slice(0, 12) ?? null)
 
   // Flat list of non-deleted nodes
   const visibleNodes = nodes.filter((n) => !n.deletedAt)
@@ -45,7 +48,7 @@ export function PlanPanel({ height }: PlanPanelProps) {
       {selectedProjectId && (
         <Box gap={2}>
           <Text dimColor>Machine:</Text>
-          <Text color="cyan">{machineName ?? machineId?.slice(0, 12) ?? 'none'}</Text>
+          <Text color="cyan">{machineName ?? 'none'}</Text>
           <Text dimColor>Dir:</Text>
           <Text color="cyan">{truncate(workDir ?? 'not set', 40)}</Text>
         </Box>
