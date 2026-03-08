@@ -1,12 +1,14 @@
 import React from 'react'
-import { Text } from 'ink'
+import { Box, Text } from 'ink'
 import { Panel } from '../layout/panel.js'
 import { ScrollableList, type ListItem } from '../shared/scrollable-list.js'
 import { Spinner } from '../shared/spinner.js'
 import { usePlanStore } from '../../stores/plan-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
 import { useProjectsStore } from '../../stores/projects-store.js'
+import { useSessionSettingsStore } from '../../stores/session-settings-store.js'
 import { getStatusColor, getStatusSymbol } from '../../lib/status-colors.js'
+import { truncate } from '../../lib/format.js'
 
 interface PlanPanelProps {
   height: number
@@ -23,7 +25,10 @@ export function PlanPanel({ height }: PlanPanelProps) {
   const projects = useProjectsStore((s) => s.projects)
 
   const isFocused = focusedPanel === 'plan'
-  const projectName = projects.find((p) => p.id === selectedProjectId)?.name ?? 'none'
+  const project = projects.find((p) => p.id === selectedProjectId)
+  const projectName = project?.name ?? 'none'
+  const workDir = project?.workingDirectory ?? null
+  const { machineId, machineName } = useSessionSettingsStore()
 
   // Flat list of non-deleted nodes
   const visibleNodes = nodes.filter((n) => !n.deletedAt)
@@ -37,6 +42,14 @@ export function PlanPanel({ height }: PlanPanelProps) {
 
   return (
     <Panel title={`PLAN (${projectName})  d:dispatch`} isFocused={isFocused} height={height}>
+      {selectedProjectId && (
+        <Box gap={2}>
+          <Text dimColor>Machine:</Text>
+          <Text color="cyan">{machineName ?? machineId?.slice(0, 12) ?? 'none'}</Text>
+          <Text dimColor>Dir:</Text>
+          <Text color="cyan">{truncate(workDir ?? 'not set', 40)}</Text>
+        </Box>
+      )}
       {loading && nodes.length === 0 ? (
         <Spinner label="Loading plan..." />
       ) : error ? (
@@ -49,7 +62,7 @@ export function PlanPanel({ height }: PlanPanelProps) {
         <ScrollableList
           items={items}
           selectedIndex={scrollIndex}
-          height={height - 3}
+          height={height - 4}
           isFocused={isFocused}
         />
       )}
