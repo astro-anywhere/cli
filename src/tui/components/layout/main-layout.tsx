@@ -13,6 +13,7 @@ import { SessionPanel } from '../panels/session-panel.js'
 import { ActiveListPanel } from '../panels/active-list-panel.js'
 import { DetailOverlay } from '../panels/detail-overlay.js'
 import { ApprovalDialog } from '../shared/approval-dialog.js'
+import { ApprovalOverlay } from './approval-overlay.js'
 import { useTuiStore } from '../../stores/tui-store.js'
 import { useSearchStore } from '../../stores/search-store.js'
 import { useExecutionStore } from '../../stores/execution-store.js'
@@ -29,6 +30,7 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
   const mode = useTuiStore((s) => s.mode)
   const searchOpen = useSearchStore((s) => s.isOpen)
   const pendingApproval = useExecutionStore((s) => s.pendingApproval)
+  const showApproval = useTuiStore((s) => s.showApproval)
   const { stdout } = useStdout()
 
   const termHeight = stdout?.rows ?? 24
@@ -156,6 +158,7 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
       {content}
       <SearchOverlay />
       {approvalOverlay}
+      {showApproval && <ApprovalOverlay />}
       <CommandLine height={bottomPanelHeight} />
     </Box>
   )

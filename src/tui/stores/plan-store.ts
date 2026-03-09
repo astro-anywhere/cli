@@ -7,6 +7,8 @@ import { create } from 'zustand'
 import type { PlanNode, PlanEdge } from '../../client.js'
 import { buildTree, renderTreeLines, type TreeLine, type TreeNode } from '../lib/tree-builder.js'
 
+const nodeStatusGen = new Map<string, number>()
+
 export interface PlanState {
   /** Currently displayed project */
   projectId: string | null
@@ -31,6 +33,9 @@ export interface PlanActions {
   setError: (error: string | null) => void
   toggleCollapse: (nodeId: string) => void
   updateNodeStatus: (nodeId: string, status: string) => void
+  mergeNode: (node: PlanNode) => void
+  bumpNodeStatusGen: (nodeId: string) => number
+  getNodeStatusGen: (nodeId: string) => number
   clear: () => void
 }
 
@@ -138,6 +143,32 @@ export const usePlanStore = create<PlanState & PlanActions>((set, get) => ({
     } else {
       set({ nodes: updated, treeRoots, treeLines })
     }
+  },
+
+  mergeNode: (node) => {
+    const { nodes, edges, collapsedNodes, projectId, cache } = get()
+    const idx = nodes.findIndex((n) => n.id === node.id)
+    const updated = idx >= 0
+      ? nodes.map((n) => (n.id === node.id ? node : n))
+      : [...nodes, node]
+    const { treeRoots, treeLines } = buildView(updated, edges, collapsedNodes)
+    if (projectId) {
+      const next = new Map(cache)
+      next.set(projectId, { nodes: updated, edges })
+      set({ nodes: updated, treeRoots, treeLines, cache: next })
+    } else {
+      set({ nodes: updated, treeRoots, treeLines })
+    }
+  },
+
+  bumpNodeStatusGen: (nodeId) => {
+    const gen = (nodeStatusGen.get(nodeId) ?? 0) + 1
+    nodeStatusGen.set(nodeId, gen)
+    return gen
+  },
+
+  getNodeStatusGen: (nodeId) => {
+    return nodeStatusGen.get(nodeId) ?? 0
   },
 
   clear: () => set({

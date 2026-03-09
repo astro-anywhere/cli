@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef } from 'react'
 import { SSEClient, type SSEEvent } from '../sse-client.js'
-import type { AstroClient, Machine } from '../../client.js'
+import { getClient, type AstroClient, type Machine } from '../../client.js'
 import { useTuiStore } from '../stores/tui-store.js'
 import { useMachinesStore } from '../stores/machines-store.js'
 import { useExecutionStore } from '../stores/execution-store.js'
@@ -81,14 +81,7 @@ export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
           const taskId = event.data.taskId as string
           const status = event.data.status as string
           useExecutionStore.getState().setStatus(taskId, status)
-          // Update plan node status
-          const nodeId = event.data.nodeId as string
-          if (nodeId && status) {
-            const mappedStatus = status === 'success' ? 'completed'
-              : status === 'failure' ? 'planned'
-              : status
-            usePlanStore.getState().updateNodeStatus(nodeId, mappedStatus)
-          }
+          // Plan-node status now handled by node:status_changed SSE event
           break
         }
 
@@ -137,13 +130,62 @@ export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
         }
 
         case 'task:approval_request': {
+          const taskId = event.data.taskId as string
+          const requestId = event.data.requestId as string
+          const question = event.data.question as string
+          const options = (event.data.options ?? []) as string[]
+          const machineId = event.data.machineId as string | undefined
+          // Route to execution store (for inline ApprovalDialog)
           useExecutionStore.getState().setPendingApproval({
-            requestId: event.data.requestId as string,
-            question: event.data.question as string,
-            options: event.data.options as string[],
-            machineId: event.data.machineId as string | undefined,
-            taskId: event.data.taskId as string | undefined,
+            requestId, question, options, machineId, taskId,
           })
+          // Also route to tui store (for queued overlay + :approve/:reject commands)
+          if (requestId && question) {
+            useTuiStore.getState().addPendingApproval({ taskId, requestId, question, options, machineId })
+          }
+          break
+        }
+
+        case 'task:approval_auto_responded': {
+          const requestId = event.data.requestId as string
+          if (requestId) {
+            useTuiStore.getState().removePendingApproval(requestId)
+            useExecutionStore.getState().setPendingApproval(null)
+          }
+          break
+        }
+
+        case 'node:status_changed': {
+          const nodeId = event.data.nodeId as string
+          const projectId = event.data.projectId as string
+          const planState = usePlanStore.getState()
+          // Skip events for other projects
+          if (planState.projectId && projectId && planState.projectId !== projectId) break
+          if (!nodeId) break
+          const gen = planState.bumpNodeStatusGen(nodeId)
+          // Fetch fresh node from DB
+          getClient().getNode(nodeId).then((freshNode) => {
+            if (freshNode && planState.getNodeStatusGen(nodeId) === gen) {
+              usePlanStore.getState().mergeNode(freshNode)
+            }
+          }).catch(() => {
+            // Fallback: update status from event payload
+            const status = event.data.status as string
+            if (status && planState.getNodeStatusGen(nodeId) === gen) {
+              usePlanStore.getState().updateNodeStatus(nodeId, status)
+            }
+          })
+          break
+        }
+
+        case 'task:init': {
+          const execId = event.data.executionId as string
+          const nodeId = event.data.nodeId as string
+          const title = (event.data.title as string | undefined) ?? nodeId
+          if (execId) {
+            useExecutionStore.getState().initExecution(execId, nodeId ?? execId, title)
+            useExecutionStore.getState().setWatching(execId)
+          }
           break
         }
 
