@@ -32,31 +32,35 @@ export function ApprovalOverlay() {
 
     if (key.return) {
       const answer = approval.options[selectedIndex] ?? approval.options[0] ?? 'yes'
+      const reqId = approval.requestId
       getClient().sendApproval({
         taskId: approval.taskId,
         machineId: approval.machineId ?? '',
-        requestId: approval.requestId,
+        requestId: reqId,
         answered: true,
         answer,
+      }).then(() => {
+        removePendingApproval(reqId)
       }).catch((err: unknown) => {
         setLastError(err instanceof Error ? err.message : String(err))
       })
-      removePendingApproval(approval.requestId)
       return
     }
 
     // 'r' to reject
     if (input === 'r' && !key.ctrl) {
+      const reqId = approval.requestId
       getClient().sendApproval({
         taskId: approval.taskId,
         machineId: approval.machineId ?? '',
-        requestId: approval.requestId,
+        requestId: reqId,
         answered: false,
         message: 'Rejected from TUI',
+      }).then(() => {
+        removePendingApproval(reqId)
       }).catch((err: unknown) => {
         setLastError(err instanceof Error ? err.message : String(err))
       })
-      removePendingApproval(approval.requestId)
       return
     }
   }, { isActive: showApproval })

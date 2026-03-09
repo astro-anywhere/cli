@@ -150,7 +150,9 @@ export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
           const requestId = event.data.requestId as string
           if (requestId) {
             useTuiStore.getState().removePendingApproval(requestId)
-            useExecutionStore.getState().setPendingApproval(null)
+            if (useExecutionStore.getState().pendingApproval?.requestId === requestId) {
+              useExecutionStore.getState().setPendingApproval(null)
+            }
           }
           break
         }
@@ -165,13 +167,13 @@ export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
           const gen = planState.bumpNodeStatusGen(nodeId)
           // Fetch fresh node from DB
           getClient().getNode(nodeId).then((freshNode) => {
-            if (freshNode && planState.getNodeStatusGen(nodeId) === gen) {
+            if (freshNode && usePlanStore.getState().getNodeStatusGen(nodeId) === gen) {
               usePlanStore.getState().mergeNode(freshNode)
             }
           }).catch(() => {
             // Fallback: update status from event payload
             const status = event.data.status as string
-            if (status && planState.getNodeStatusGen(nodeId) === gen) {
+            if (status && usePlanStore.getState().getNodeStatusGen(nodeId) === gen) {
               usePlanStore.getState().updateNodeStatus(nodeId, status)
             }
           })

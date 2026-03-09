@@ -588,7 +588,9 @@ export const handlers: Record<string, CommandHandler> = {
       })
       tuiState.removePendingApproval(requestId)
       tuiState.hideApprovalOverlay()
-      useExecutionStore.getState().setPendingApproval(null)
+      if (useExecutionStore.getState().pendingApproval?.requestId === requestId) {
+        useExecutionStore.getState().setPendingApproval(null)
+      }
     } catch (err) {
       tuiState.setLastError(err instanceof Error ? err.message : String(err))
     }
@@ -617,7 +619,9 @@ export const handlers: Record<string, CommandHandler> = {
       })
       tuiState.removePendingApproval(requestId)
       tuiState.hideApprovalOverlay()
-      useExecutionStore.getState().setPendingApproval(null)
+      if (useExecutionStore.getState().pendingApproval?.requestId === requestId) {
+        useExecutionStore.getState().setPendingApproval(null)
+      }
     } catch (err) {
       tuiState.setLastError(err instanceof Error ? err.message : String(err))
     }

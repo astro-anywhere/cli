@@ -147,6 +147,8 @@ export const usePlanStore = create<PlanState & PlanActions>((set, get) => ({
 
   mergeNode: (node) => {
     const { nodes, edges, collapsedNodes, projectId, cache } = get()
+    // Don't merge nodes from a different project
+    if (projectId && node.projectId && node.projectId !== projectId) return
     const idx = nodes.findIndex((n) => n.id === node.id)
     const updated = idx >= 0
       ? nodes.map((n) => (n.id === node.id ? node : n))
