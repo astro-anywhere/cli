@@ -62,8 +62,9 @@ export function MainLayout({ onSessionMessage }: MainLayoutProps) {
     )
   }
 
-  // Approval dialog overlay
-  const approvalOverlay = pendingApproval ? (
+  // Approval dialog overlay — only show the legacy inline dialog when the
+  // new queued ApprovalOverlay is NOT active (avoids dual-render confusion).
+  const approvalOverlay = (pendingApproval && !showApproval) ? (
     <Box position="absolute" marginTop={4} marginLeft={Math.floor(termWidth / 4)}>
       <ApprovalDialog
         question={pendingApproval.question}

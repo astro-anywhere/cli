@@ -1,6 +1,7 @@
 import React from 'react'
 import { Box, Text, useInput } from 'ink'
 import { useTuiStore } from '../../stores/tui-store.js'
+import { useExecutionStore } from '../../stores/execution-store.js'
 import { getClient } from '../../../client.js'
 
 export function ApprovalOverlay() {
@@ -41,6 +42,9 @@ export function ApprovalOverlay() {
         answer,
       }).then(() => {
         removePendingApproval(reqId)
+        if (useExecutionStore.getState().pendingApproval?.requestId === reqId) {
+          useExecutionStore.getState().setPendingApproval(null)
+        }
       }).catch((err: unknown) => {
         setLastError(err instanceof Error ? err.message : String(err))
       })
@@ -58,6 +62,9 @@ export function ApprovalOverlay() {
         message: 'Rejected from TUI',
       }).then(() => {
         removePendingApproval(reqId)
+        if (useExecutionStore.getState().pendingApproval?.requestId === reqId) {
+          useExecutionStore.getState().setPendingApproval(null)
+        }
       }).catch((err: unknown) => {
         setLastError(err instanceof Error ? err.message : String(err))
       })

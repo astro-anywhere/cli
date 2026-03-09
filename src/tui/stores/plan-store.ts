@@ -173,13 +173,16 @@ export const usePlanStore = create<PlanState & PlanActions>((set, get) => ({
     return nodeStatusGen.get(nodeId) ?? 0
   },
 
-  clear: () => set({
-    projectId: null,
-    nodes: [],
-    edges: [],
-    treeRoots: [],
-    treeLines: [],
-    loading: false,
-    error: null,
-  }),
+  clear: () => {
+    nodeStatusGen.clear()
+    set({
+      projectId: null,
+      nodes: [],
+      edges: [],
+      treeRoots: [],
+      treeLines: [],
+      loading: false,
+      error: null,
+    })
+  },
 }))
