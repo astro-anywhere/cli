@@ -11,13 +11,50 @@ export function ApprovalOverlay() {
   const selectedIndex = useTuiStore((s) => s.approvalSelectedIndex)
   const { setApprovalSelectedIndex, removePendingApproval, hideApprovalOverlay, setLastError } = useTuiStore()
 
+  const [confirmingReject, setConfirmingReject] = React.useState(false)
+
   const approval = activeApprovalId ? pendingApprovals.get(activeApprovalId) : null
+
+  // Reset confirmation state when approval changes
+  React.useEffect(() => {
+    setConfirmingReject(false)
+  }, [activeApprovalId])
 
   useInput((input, key) => {
     if (!showApproval || !approval) return
 
     if (key.escape) {
+      if (confirmingReject) {
+        setConfirmingReject(false)
+        return
+      }
       hideApprovalOverlay()
+      return
+    }
+
+    // In rejection confirmation mode
+    if (confirmingReject) {
+      if (input === 'y' || key.return) {
+        setConfirmingReject(false)
+        const reqId = approval.requestId
+        const nodeTitle = approval.question.slice(0, 60)
+        getClient().sendApproval({
+          taskId: approval.taskId,
+          machineId: approval.machineId ?? '',
+          requestId: reqId,
+          answered: false,
+          message: `Rejected by user via TUI: ${nodeTitle}`,
+        }).then(() => {
+          removePendingApproval(reqId)
+          if (useExecutionStore.getState().pendingApproval?.requestId === reqId) {
+            useExecutionStore.getState().setPendingApproval(null)
+          }
+        }).catch((err: unknown) => {
+          setLastError(err instanceof Error ? err.message : String(err))
+        })
+      } else if (input === 'n') {
+        setConfirmingReject(false)
+      }
       return
     }
 
@@ -51,23 +88,9 @@ export function ApprovalOverlay() {
       return
     }
 
-    // 'r' to reject
+    // 'r' to reject — requires confirmation
     if (input === 'r' && !key.ctrl) {
-      const reqId = approval.requestId
-      getClient().sendApproval({
-        taskId: approval.taskId,
-        machineId: approval.machineId ?? '',
-        requestId: reqId,
-        answered: false,
-        message: 'Rejected from TUI',
-      }).then(() => {
-        removePendingApproval(reqId)
-        if (useExecutionStore.getState().pendingApproval?.requestId === reqId) {
-          useExecutionStore.getState().setPendingApproval(null)
-        }
-      }).catch((err: unknown) => {
-        setLastError(err instanceof Error ? err.message : String(err))
-      })
+      setConfirmingReject(true)
       return
     }
   }, { isActive: showApproval })
@@ -107,7 +130,11 @@ export function ApprovalOverlay() {
         ))}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>Enter: approve | r: reject | Esc: dismiss</Text>
+        {confirmingReject ? (
+          <Text bold color="red">Reject this approval? y/n</Text>
+        ) : (
+          <Text dimColor>Enter: approve | r: reject | Esc: dismiss</Text>
+        )}
       </Box>
     </Box>
   )

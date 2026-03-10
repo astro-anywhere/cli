@@ -183,6 +183,7 @@ export const usePlanStore = create<PlanState & PlanActions>((set, get) => ({
       treeLines: [],
       loading: false,
       error: null,
+      cache: new Map(),
     })
   },
 }))

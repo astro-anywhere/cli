@@ -206,5 +206,5 @@ export function useSSEStream(client: AstroClient, onReconnect?: () => void) {
     return () => {
       sse.stop()
     }
-  }, [client, setConnected, setMachineCount, setLastError])
+  }, [client, setConnected, setMachineCount, setLastError, onReconnect])
 }
