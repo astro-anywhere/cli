@@ -41,6 +41,8 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   { name: 'project chat', description: 'Chat with AI about the selected project', usage: 'project chat <message>' },
   { name: 'task chat', description: 'Chat with AI about the selected task', usage: 'task chat <message>' },
   { name: 'summarize', description: 'AI-generated summary of an execution', usage: 'summarize [executionId]' },
+  { name: 'approve', description: 'Approve pending approval request', usage: 'approve [requestId] [option]' },
+  { name: 'reject', description: 'Reject pending approval request', usage: 'reject [requestId] [message]' },
   { name: 'refresh', description: 'Refresh all data' },
   { name: 'help', description: 'Toggle keybinding reference' },
   { name: 'quit', description: 'Exit the TUI' },
@@ -559,6 +561,69 @@ export const handlers: Record<string, CommandHandler> = {
       useTuiStore.getState().setActiveView('plan-gen')
     } else {
       useTuiStore.getState().setActiveView('active')
+    }
+  },
+
+  // ── Approval ──
+  approve: async (args, client) => {
+    const tuiState = useTuiStore.getState()
+    const requestId = args[0] ?? tuiState.activeApprovalId
+    if (!requestId) {
+      tuiState.setLastError('No pending approval to approve')
+      return
+    }
+    const approval = tuiState.pendingApprovals.get(requestId)
+    if (!approval) {
+      tuiState.setLastError(`Approval not found: ${requestId}`)
+      return
+    }
+    const answer = args[1] ?? approval.options[0] ?? 'yes'
+    try {
+      await client.sendApproval({
+        taskId: approval.taskId,
+        machineId: approval.machineId ?? '',
+        requestId: approval.requestId,
+        answered: true,
+        answer,
+      })
+      tuiState.removePendingApproval(requestId)
+      tuiState.hideApprovalOverlay()
+      if (useExecutionStore.getState().pendingApproval?.requestId === requestId) {
+        useExecutionStore.getState().setPendingApproval(null)
+      }
+    } catch (err) {
+      tuiState.setLastError(err instanceof Error ? err.message : String(err))
+    }
+  },
+
+  reject: async (args, client) => {
+    const tuiState = useTuiStore.getState()
+    const requestId = args[0] ?? tuiState.activeApprovalId
+    if (!requestId) {
+      tuiState.setLastError('No pending approval to reject')
+      return
+    }
+    const approval = tuiState.pendingApprovals.get(requestId)
+    if (!approval) {
+      tuiState.setLastError(`Approval not found: ${requestId}`)
+      return
+    }
+    const message = args.slice(1).join(' ') || 'Rejected from TUI'
+    try {
+      await client.sendApproval({
+        taskId: approval.taskId,
+        machineId: approval.machineId ?? '',
+        requestId: approval.requestId,
+        answered: false,
+        message,
+      })
+      tuiState.removePendingApproval(requestId)
+      tuiState.hideApprovalOverlay()
+      if (useExecutionStore.getState().pendingApproval?.requestId === requestId) {
+        useExecutionStore.getState().setPendingApproval(null)
+      }
+    } catch (err) {
+      tuiState.setLastError(err instanceof Error ? err.message : String(err))
     }
   },
 

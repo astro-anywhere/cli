@@ -37,6 +37,15 @@ export interface TuiState {
   detailType: 'project' | 'node' | 'machine' | 'execution' | null
   detailId: string | null
 
+  // Approval
+  pendingApprovals: Map<string, {
+    requestId: string; taskId: string; question: string;
+    options: string[]; machineId?: string; timestamp: Date
+  }>
+  showApproval: boolean
+  activeApprovalId: string | null
+  approvalSelectedIndex: number
+
   // Connection
   connected: boolean
   machineCount: number
@@ -82,6 +91,15 @@ export interface TuiActions {
   closeDetail: () => void
   closeOverlays: () => void
 
+  addPendingApproval: (approval: {
+    requestId: string; taskId: string; question: string;
+    options: string[]; machineId?: string
+  }) => void
+  removePendingApproval: (requestId: string) => void
+  showApprovalOverlay: (requestId: string) => void
+  hideApprovalOverlay: () => void
+  setApprovalSelectedIndex: (i: number) => void
+
   setConnected: (v: boolean) => void
   setMachineCount: (n: number) => void
   setTodayCost: (n: number) => void
@@ -112,6 +130,11 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   showChat: false,
   detailType: null,
   detailId: null,
+
+  pendingApprovals: new Map(),
+  showApproval: false,
+  activeApprovalId: null,
+  approvalSelectedIndex: 0,
 
   connected: false,
   machineCount: 0,
@@ -201,7 +224,38 @@ export const useTuiStore = create<TuiState & TuiActions>((set, get) => ({
   toggleChat: () => set((s) => ({ showChat: !s.showChat })),
   openDetail: (type, id) => set({ showDetail: true, detailType: type, detailId: id, showHelp: false, showSearch: false }),
   closeDetail: () => set({ showDetail: false, detailType: null, detailId: null }),
-  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, showChat: false, detailType: null, detailId: null }),
+  closeOverlays: () => set({ showHelp: false, showSearch: false, showDetail: false, showChat: false, detailType: null, detailId: null, showApproval: false, activeApprovalId: null, approvalSelectedIndex: 0 }),
+
+  addPendingApproval: (approval) => {
+    const { pendingApprovals, showApproval } = get()
+    const next = new Map(pendingApprovals)
+    next.set(approval.requestId, { ...approval, timestamp: new Date() })
+    if (!showApproval) {
+      set({ pendingApprovals: next, showApproval: true, activeApprovalId: approval.requestId, approvalSelectedIndex: 0 })
+    } else {
+      set({ pendingApprovals: next })
+    }
+  },
+
+  removePendingApproval: (requestId) => {
+    const { pendingApprovals, activeApprovalId } = get()
+    const next = new Map(pendingApprovals)
+    next.delete(requestId)
+    if (activeApprovalId === requestId) {
+      const nextId = next.keys().next().value as string | undefined
+      if (nextId) {
+        set({ pendingApprovals: next, activeApprovalId: nextId, approvalSelectedIndex: 0 })
+      } else {
+        set({ pendingApprovals: next, showApproval: false, activeApprovalId: null, approvalSelectedIndex: 0 })
+      }
+    } else {
+      set({ pendingApprovals: next })
+    }
+  },
+
+  showApprovalOverlay: (requestId) => set({ showApproval: true, activeApprovalId: requestId, approvalSelectedIndex: 0 }),
+  hideApprovalOverlay: () => set({ showApproval: false, activeApprovalId: null, approvalSelectedIndex: 0 }),
+  setApprovalSelectedIndex: (approvalSelectedIndex) => set({ approvalSelectedIndex }),
 
   setConnected: (connected) => set({ connected }),
   setMachineCount: (machineCount) => set({ machineCount }),
