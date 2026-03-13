@@ -28,8 +28,17 @@ interface DeviceTokenError {
 }
 
 function openUrl(url: string): void {
-  const cmd = platform() === 'darwin' ? 'open' : 'xdg-open'
-  exec(`${cmd} ${JSON.stringify(url)}`, () => {
+  const plt = platform()
+  let cmd: string
+  if (plt === 'darwin') {
+    cmd = `open ${JSON.stringify(url)}`
+  } else if (plt === 'win32') {
+    // On Windows, `start` is a shell built-in — must invoke via cmd /c
+    cmd = `cmd /c start "" ${JSON.stringify(url)}`
+  } else {
+    cmd = `xdg-open ${JSON.stringify(url)}`
+  }
+  exec(cmd, () => {
     // Ignore errors (e.g., no browser available)
   })
 }
