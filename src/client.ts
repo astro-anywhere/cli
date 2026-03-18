@@ -408,7 +408,11 @@ export class AstroClient {
     status?: string
     parentId?: string | null
     priority?: string | null
+    milestoneId?: string | null
+    dependencies?: string[]
     estimate?: string | null
+    verification?: string
+    dueDate?: string | null
     startDate?: string | null
     endDate?: string | null
     position?: { x: number; y: number }
@@ -426,6 +430,14 @@ export class AstroClient {
 
   async deletePlanNode(nodeId: string): Promise<{ ok: boolean }> {
     return this.del(`/api/data/plan/nodes/${nodeId}`)
+  }
+
+  async createPlanEdge(data: { id: string; projectId: string; source: string; target: string; type?: string }): Promise<{ ok: boolean }> {
+    return this.post('/api/data/plan/edges', { type: 'dependency', ...data })
+  }
+
+  async deletePlanEdge(edgeId: string): Promise<{ ok: boolean }> {
+    return this.del(`/api/data/plan/edges/${edgeId}`)
   }
 
   // ── Project Update ────────────────────────────────────────────────
