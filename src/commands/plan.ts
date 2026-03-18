@@ -87,6 +87,38 @@ function renderTreeLines(roots: TreeNode[]): string[] {
   return lines
 }
 
+// ── ID validation helper ─────────────────────────────────────────────
+
+/**
+ * Validate that the given node IDs exist in the project plan.
+ * Returns an error string if any are invalid, or null if all OK.
+ * Prints a helpful message listing valid IDs so the agent can self-correct.
+ */
+async function validateNodeIds(
+  client: ReturnType<typeof getClient>,
+  projectId: string,
+  ids: { id: string; role: string }[],
+  json: boolean,
+): Promise<string | null> {
+  if (ids.length === 0) return null
+  let nodes: Array<{ id: string; title: string; type: string }>
+  try {
+    const plan = await client.getPlan(projectId)
+    nodes = plan.nodes
+  } catch (err) {
+    return `Failed to fetch plan for validation: ${err instanceof Error ? err.message : String(err)}`
+  }
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+  const errors: string[] = []
+  for (const { id, role } of ids) {
+    if (!nodeMap.has(id)) {
+      const available = nodes.slice(0, 10).map(n => `  ${n.id}  (${n.type}) ${n.title}`).join('\n')
+      errors.push(`${role} "${id}" not found in project. Valid node IDs:\n${available}`)
+    }
+  }
+  return errors.length > 0 ? errors.join('\n') : null
+}
+
 // ── Command registration ──────────────────────────────────────────────
 
 export function registerPlanCommands(program: Command): void {
@@ -246,6 +278,13 @@ export function registerPlanCommands(program: Command): void {
     .option('--status <status>', 'Initial status', 'planned')
     .option('--parent-id <id>', 'Parent node ID')
     .option('--priority <priority>', 'Priority: critical, high, normal, low')
+    .option('--milestone-id <id>', 'Milestone node ID to link this task to')
+    .option('--dependency <nodeId>', 'Dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
+    .option('--estimate <size>', 'Estimate: XS | S | M | L | XL')
+    .option('--verification <type>', 'Verification type: auto | human', 'auto')
+    .option('--due-date <YYYY-MM-DD>', 'Due date')
+    .option('--start-date <YYYY-MM-DD>', 'Start date')
+    .option('--end-date <YYYY-MM-DD>', 'End date')
     .action(async (cmdOpts: {
       projectId: string
       title: string
@@ -254,12 +293,37 @@ export function registerPlanCommands(program: Command): void {
       status: string
       parentId?: string
       priority?: string
+      milestoneId?: string
+      dependency: string[]
+      estimate?: string
+      verification?: string
+      dueDate?: string
+      startDate?: string
+      endDate?: string
     }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
       // Generate a client ID
       const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+      // Validate referenced IDs before submitting
+      const idsToValidate = [
+        ...cmdOpts.dependency.map(d => ({ id: d, role: '--dependency' })),
+        ...(cmdOpts.milestoneId ? [{ id: cmdOpts.milestoneId, role: '--milestone-id' }] : []),
+      ]
+      if (idsToValidate.length > 0) {
+        const validationError = await validateNodeIds(client, cmdOpts.projectId, idsToValidate, opts.json)
+        if (validationError) {
+          if (opts.json) {
+            print({ error: validationError }, { json: true })
+          } else {
+            console.error(chalk.red(`Validation failed:\n${validationError}`))
+          }
+          process.exitCode = 1
+          return
+        }
+      }
 
       try {
         await client.createPlanNode({
@@ -271,6 +335,13 @@ export function registerPlanCommands(program: Command): void {
           status: cmdOpts.status,
           parentId: cmdOpts.parentId ?? null,
           priority: cmdOpts.priority ?? null,
+          milestoneId: cmdOpts.milestoneId ?? null,
+          dependencies: cmdOpts.dependency.length > 0 ? cmdOpts.dependency : undefined,
+          estimate: cmdOpts.estimate ?? null,
+          verification: cmdOpts.verification,
+          dueDate: cmdOpts.dueDate ?? null,
+          startDate: cmdOpts.startDate ?? null,
+          endDate: cmdOpts.endDate ?? null,
         })
 
         if (opts.json) {
@@ -301,12 +372,28 @@ export function registerPlanCommands(program: Command): void {
     .option('--description <desc>', 'New description')
     .option('--priority <priority>', 'New priority: critical, high, normal, low')
     .option('--type <type>', 'New type: task, milestone, decision')
+    .option('--milestone-id <id>', 'Milestone node ID')
+    .option('--add-dependency <nodeId>', 'Add a dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
+    .option('--remove-dependency <nodeId>', 'Remove a dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
+    .option('--estimate <size>', 'Estimate: XS | S | M | L | XL')
+    .option('--verification <type>', 'Verification type: auto | human')
+    .option('--due-date <YYYY-MM-DD>', 'Due date')
+    .option('--start-date <YYYY-MM-DD>', 'Start date')
+    .option('--end-date <YYYY-MM-DD>', 'End date')
     .action(async (nodeId: string, cmdOpts: {
       title?: string
       status?: string
       description?: string
       priority?: string
       type?: string
+      milestoneId?: string
+      addDependency: string[]
+      removeDependency: string[]
+      estimate?: string
+      verification?: string
+      dueDate?: string
+      startDate?: string
+      endDate?: string
     }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
@@ -317,9 +404,41 @@ export function registerPlanCommands(program: Command): void {
       if (cmdOpts.description !== undefined) patch.description = cmdOpts.description
       if (cmdOpts.priority !== undefined) patch.priority = cmdOpts.priority
       if (cmdOpts.type !== undefined) patch.type = cmdOpts.type
+      if (cmdOpts.milestoneId !== undefined) patch.milestoneId = cmdOpts.milestoneId
+      if (cmdOpts.estimate !== undefined) patch.estimate = cmdOpts.estimate
+      if (cmdOpts.verification !== undefined) patch.verification = cmdOpts.verification
+      if (cmdOpts.dueDate !== undefined) patch.dueDate = cmdOpts.dueDate
+      if (cmdOpts.startDate !== undefined) patch.startDate = cmdOpts.startDate
+      if (cmdOpts.endDate !== undefined) patch.endDate = cmdOpts.endDate
+
+      // Handle dependency add/remove: fetch current node, patch dependencies list
+      if (cmdOpts.addDependency.length > 0 || cmdOpts.removeDependency.length > 0) {
+        try {
+          const { nodes } = await client.getFullPlan()
+          const node = nodes.find((n: { id: string }) => n.id === nodeId)
+          if (!node) {
+            console.error(chalk.red(`Node ${nodeId} not found`))
+            process.exitCode = 1
+            return
+          }
+          const currentDeps: string[] = (node as Record<string, unknown>).dependencies as string[] ?? []
+          const toRemove = new Set(cmdOpts.removeDependency)
+          const newDeps = [...currentDeps.filter((d: string) => !toRemove.has(d)), ...cmdOpts.addDependency.filter((d: string) => !currentDeps.includes(d))]
+          patch.dependencies = newDeps
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (opts.json) {
+            print({ error: `Failed to fetch node for dependency update: ${msg}` }, { json: true })
+          } else {
+            console.error(chalk.red(`Failed to fetch node for dependency update: ${msg}`))
+          }
+          process.exitCode = 1
+          return
+        }
+      }
 
       if (Object.keys(patch).length === 0) {
-        console.error(chalk.red('No update fields provided. Use --title, --status, --description, --priority, or --type.'))
+        console.error(chalk.red('No update fields provided.'))
         process.exitCode = 1
         return
       }
@@ -365,6 +484,98 @@ export function registerPlanCommands(program: Command): void {
           print({ error: msg }, { json: true })
         } else {
           console.error(chalk.red(`Delete failed: ${msg}`))
+        }
+        process.exitCode = 1
+      }
+    })
+
+  // ── plan add-edge ─────────────────────────────────────────────────
+  plan
+    .command('add-edge')
+    .description('Add a dependency edge between two plan nodes')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--source <nodeId>', 'Source node ID')
+    .requiredOption('--target <nodeId>', 'Target node ID')
+    .option('--type <type>', 'Edge type: dependency | branch', 'dependency')
+    .action(async (cmdOpts: { projectId: string; source: string; target: string; type: string }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      const id = `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+      // Validate source and target exist before creating
+      const validationError = await validateNodeIds(client, cmdOpts.projectId, [
+        { id: cmdOpts.source, role: '--source' },
+        { id: cmdOpts.target, role: '--target' },
+      ], opts.json)
+      if (validationError) {
+        if (opts.json) {
+          print({ error: validationError }, { json: true })
+        } else {
+          console.error(chalk.red(`Validation failed:\n${validationError}`))
+        }
+        process.exitCode = 1
+        return
+      }
+
+      try {
+        const result = await client.createPlanEdge({ id, projectId: cmdOpts.projectId, source: cmdOpts.source, target: cmdOpts.target, type: cmdOpts.type })
+
+        if (opts.json) {
+          print({ ...result, id, source: cmdOpts.source, target: cmdOpts.target }, { json: true })
+        } else {
+          console.log(chalk.green(`Edge added: ${cmdOpts.source} → ${cmdOpts.target} (${cmdOpts.type})`))
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(`Add edge failed: ${msg}`))
+        }
+        process.exitCode = 1
+      }
+    })
+
+  // ── plan remove-edge ──────────────────────────────────────────────
+  plan
+    .command('remove-edge')
+    .description('Remove a dependency edge between two plan nodes')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--source <nodeId>', 'Source node ID')
+    .requiredOption('--target <nodeId>', 'Target node ID')
+    .action(async (cmdOpts: { projectId: string; source: string; target: string }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      try {
+        const { edges } = await client.getPlan(cmdOpts.projectId)
+        const edge = edges.find((e: { source: string; target: string }) => e.source === cmdOpts.source && e.target === cmdOpts.target)
+
+        if (!edge) {
+          const msg = `No edge found from ${cmdOpts.source} to ${cmdOpts.target}`
+          if (opts.json) {
+            print({ error: msg }, { json: true })
+          } else {
+            console.error(chalk.red(msg))
+          }
+          process.exitCode = 1
+          return
+        }
+
+        const result = await client.deletePlanEdge((edge as { id: string }).id)
+
+        if (opts.json) {
+          print({ ...result, source: cmdOpts.source, target: cmdOpts.target }, { json: true })
+        } else {
+          console.log(chalk.green(`Edge removed: ${cmdOpts.source} → ${cmdOpts.target}`))
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(`Remove edge failed: ${msg}`))
         }
         process.exitCode = 1
       }
