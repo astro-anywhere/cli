@@ -578,6 +578,14 @@ export class AstroClient {
     return res
   }
 
+  async getNode(nodeId: string): Promise<PlanNode | null> {
+    try {
+      return await this.get<PlanNode>(`/api/data/plan/nodes/${nodeId}`)
+    } catch {
+      return null
+    }
+  }
+
   // ── Approval ───────────────────────────────────────────────────────
 
   async sendApproval(payload: {

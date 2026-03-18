@@ -157,7 +157,7 @@ export function useVimMode(callbacks: VimModeCallbacks = {}) {
   useInput((input, key) => {
     // Don't handle input when overlays are open (except Escape)
     const searchOpen = useSearchStore.getState().isOpen
-    if (store.showHelp || store.showSearch || store.showDetail || searchOpen) {
+    if (store.showHelp || store.showSearch || store.showDetail || store.showApproval || searchOpen) {
       if (key.escape) {
         if (searchOpen) useSearchStore.getState().close()
         store.closeOverlays()
