@@ -8,7 +8,7 @@ const VIEW_LABELS: Record<ViewId, string> = {
   'plan-gen': 'Plan',
   projects: 'Projects',
   playground: 'Playground',
-  output: 'Output',
+  active: 'Active',
 }
 
 export function StatusBar() {
