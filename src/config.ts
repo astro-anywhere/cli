@@ -14,15 +14,30 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json')
 const DEFAULT_SERVER_URL = 'https://api.astroanywhere.com'
 
 export function loadConfig(): CliConfig {
+  // Env vars injected by astro-agent take precedence — enables zero-setup auth
+  // on both local and remote machines without a separate `astro-cli login` step.
+  const envToken = process.env.ASTRO_AUTH_TOKEN
+  const envServerUrl = process.env.ASTRO_SERVER_URL
+
   try {
     if (existsSync(CONFIG_FILE)) {
       const raw = readFileSync(CONFIG_FILE, 'utf-8')
-      return { serverUrl: DEFAULT_SERVER_URL, ...JSON.parse(raw) }
+      const file = JSON.parse(raw)
+      return {
+        serverUrl: DEFAULT_SERVER_URL,
+        ...file,
+        // Env vars override file — agent-runner always has a live token
+        ...(envToken ? { authToken: envToken } : {}),
+        ...(envServerUrl ? { serverUrl: envServerUrl } : {}),
+      }
     }
   } catch {
     // Ignore parse errors, return defaults
   }
-  return { serverUrl: DEFAULT_SERVER_URL }
+  return {
+    serverUrl: envServerUrl ?? DEFAULT_SERVER_URL,
+    ...(envToken ? { authToken: envToken } : {}),
+  }
 }
 
 export function saveConfig(updates: Partial<CliConfig>): void {
