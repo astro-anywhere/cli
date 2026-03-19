@@ -399,6 +399,13 @@ export class AstroClient {
 
   // ── Plan CRUD ─────────────────────────────────────────────────────
 
+  async setPlan(projectId: string, nodes: Array<Record<string, unknown>>, edges: Array<Record<string, unknown>>): Promise<{ ok: boolean; numbers?: Record<string, number> }> {
+    // Pass executionId from env so the backend can emit a plan_result streaming
+    // event, linking the plan creation to the execution's SSE pipeline.
+    const executionId = process.env.ASTRO_EXECUTION_ID || undefined
+    return this.request('PUT', `/api/data/plan/${projectId}`, { nodes, edges, executionId })
+  }
+
   async createPlanNode(data: {
     id: string
     projectId: string
