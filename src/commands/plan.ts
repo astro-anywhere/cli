@@ -119,10 +119,83 @@ async function validateNodeIds(
   return errors.length > 0 ? errors.join('\n') : null
 }
 
+async function readPlanJsonFromStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw new Error('No plan JSON received on stdin. Pipe a JSON document into `astro-cli plan create`.')
+  }
+
+  return new Promise((resolve, reject) => {
+    let raw = ''
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (chunk) => {
+      raw += chunk
+    })
+    process.stdin.on('end', () => {
+      resolve(raw)
+    })
+    process.stdin.on('error', reject)
+  })
+}
+
 // ── Command registration ──────────────────────────────────────────────
 
 export function registerPlanCommands(program: Command): void {
   const plan = program.command('plan').description('Manage plans')
+
+  // ── plan create ───────────────────────────────────────────────────
+  plan
+    .command('create')
+    .description('Create or replace a full project plan from JSON on stdin')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .action(async (cmdOpts: { projectId: string }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      try {
+        const raw = await readPlanJsonFromStdin()
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        const nodes = parsed.nodes
+        const edges = parsed.edges
+        const projectName = typeof parsed.projectName === 'string' ? parsed.projectName : undefined
+
+        if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+          throw new Error('Plan JSON must be an object with `nodes` and `edges` arrays.')
+        }
+
+        const result = await client.setPlan(
+          cmdOpts.projectId,
+          nodes as Array<Record<string, unknown>>,
+          edges as Array<Record<string, unknown>>,
+          projectName,
+        )
+
+        if (opts.json) {
+          print({
+            ...result,
+            projectId: cmdOpts.projectId,
+            projectName,
+            nodeCount: nodes.length,
+            edgeCount: edges.length,
+          }, { json: true })
+        } else {
+          console.log(chalk.green('Plan created:'))
+          console.log(`  ${chalk.bold('Project ID')}  ${cmdOpts.projectId}`)
+          if (projectName) {
+            console.log(`  ${chalk.bold('Name')}        ${projectName}`)
+          }
+          console.log(`  ${chalk.bold('Nodes')}       ${nodes.length}`)
+          console.log(`  ${chalk.bold('Edges')}       ${edges.length}`)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(`Create plan failed: ${msg}`))
+        }
+        process.exitCode = 1
+      }
+    })
 
   // ── plan list ─────────────────────────────────────────────────────
   plan
@@ -576,6 +649,98 @@ export function registerPlanCommands(program: Command): void {
           print({ error: msg }, { json: true })
         } else {
           console.error(chalk.red(`Remove edge failed: ${msg}`))
+        }
+        process.exitCode = 1
+      }
+    })
+
+  // ── plan add-github-push-task ─────────────────────────────────────
+  plan
+    .command('add-github-push-task')
+    .description('Add a pre-configured "Push to GitHub" final task node to the plan')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--repo <owner/repo>', 'GitHub repository (e.g. acme/my-app)')
+    .requiredOption('--base-branch <branch>', 'Target branch for the PR (e.g. main)')
+    .requiredOption('--milestone-id <id>', 'Milestone this task contributes to (the final milestone)')
+    .option('--depends-on <nodeId>', 'Node this task depends on (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
+    .action(async (cmdOpts: {
+      projectId: string
+      repo: string
+      baseBranch: string
+      milestoneId: string
+      dependsOn: string[]
+    }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      // Validate all referenced node IDs before creating anything
+      const idsToValidate = [
+        { id: cmdOpts.milestoneId, role: '--milestone-id' },
+        ...cmdOpts.dependsOn.map(d => ({ id: d, role: '--depends-on' })),
+      ]
+      const validationError = await validateNodeIds(client, cmdOpts.projectId, idsToValidate, opts.json)
+      if (validationError) {
+        if (opts.json) {
+          print({ error: validationError }, { json: true })
+        } else {
+          console.error(chalk.red(`Validation failed:\n${validationError}`))
+        }
+        process.exitCode = 1
+        return
+      }
+
+      const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const description =
+        `Open a pull request on ${cmdOpts.repo} merging the project branch into \`${cmdOpts.baseBranch}\`. ` +
+        `Steps: (1) rebase onto latest ${cmdOpts.baseBranch} and resolve any conflicts, force-pushing with --force-with-lease; ` +
+        `(2) create the PR with a comprehensive summary of all completed tasks and key changes; ` +
+        `(3) wait for CI checks to pass — if any fail, read the feedback, fix, push, and recheck up to 3 cycles. ` +
+        `The task succeeds when all required CI checks pass.`
+
+      try {
+        await client.createPlanNode({
+          id,
+          projectId: cmdOpts.projectId,
+          title: 'Push to GitHub',
+          type: 'task',
+          description,
+          status: 'planned',
+          parentId: null,
+          priority: null,
+          milestoneId: cmdOpts.milestoneId,
+          dependencies: cmdOpts.dependsOn.length > 0 ? cmdOpts.dependsOn : undefined,
+          estimate: 'XS',
+          verification: 'auto',
+          dueDate: null,
+          startDate: null,
+          endDate: null,
+        })
+
+        // Create dependency edges
+        const edgesAdded: string[] = []
+        for (const depId of cmdOpts.dependsOn) {
+          const edgeId = `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          await client.createPlanEdge({ id: edgeId, projectId: cmdOpts.projectId, source: depId, target: id, type: 'dependency' })
+          edgesAdded.push(depId)
+        }
+
+        if (opts.json) {
+          print({ ok: true, id, edgesAdded }, { json: true })
+        } else {
+          console.log(chalk.green('GitHub push task created:'))
+          console.log(`  ${chalk.bold('ID')}       ${id}`)
+          console.log(`  ${chalk.bold('Title')}    Push to GitHub`)
+          console.log(`  ${chalk.bold('Repo')}     ${cmdOpts.repo} → ${cmdOpts.baseBranch}`)
+          if (edgesAdded.length > 0) {
+            console.log(`  ${chalk.bold('Depends')}  ${edgesAdded.join(', ')}`)
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(`Failed: ${msg}`))
         }
         process.exitCode = 1
       }
