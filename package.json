@@ -1,6 +1,6 @@
 {
   "name": "@astroanywhere/cli",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "CLI for managing Astro projects, plans, tasks, and environments",
   "type": "module",
   "bin": {
