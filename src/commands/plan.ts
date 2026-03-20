@@ -128,18 +128,25 @@ async function readPlanJsonFromStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
     let raw = ''
+    let bytesRead = 0
+    let rejected = false
     process.stdin.setEncoding('utf8')
-    process.stdin.on('data', (chunk) => {
-      raw += chunk
-      if (Buffer.byteLength(raw) > MAX_BYTES) {
+    process.stdin.on('data', (chunk: string) => {
+      bytesRead += Buffer.byteLength(chunk)
+      if (bytesRead > MAX_BYTES) {
+        rejected = true
         process.stdin.destroy()
         reject(new Error('Plan JSON exceeds 50 MB limit'))
+        return
       }
+      raw += chunk
     })
     process.stdin.on('end', () => {
-      resolve(raw)
+      if (!rejected) resolve(raw)
     })
-    process.stdin.on('error', reject)
+    process.stdin.on('error', (err) => {
+      if (!rejected) reject(err)
+    })
   })
 }
 
@@ -1146,10 +1153,8 @@ export function registerPlanCommands(program: Command): void {
           inStack.add(id)
           for (const neighbor of (adj.get(id) ?? [])) {
             if (dfs(neighbor)) {
-              if (cyclePath.length > 0 && cyclePath[0] !== id) {
-                // Still unwinding to the cycle start — collect path
-                cyclePath.push(id)
-              }
+              // Collect nodes as we unwind the stack back to the cycle entry
+              cyclePath.push(id)
               return true
             }
           }
@@ -1179,8 +1184,8 @@ export function registerPlanCommands(program: Command): void {
             try {
               await client.deletePlanEdge(e.id)
               fixed.push(e.id)
-            } catch {
-              // silently skip — will still show in violations
+            } catch (fixErr) {
+              console.error(chalk.yellow(`  Could not auto-fix edge ${e.id}: ${fixErr instanceof Error ? fixErr.message : String(fixErr)}`))
             }
           }
         }
