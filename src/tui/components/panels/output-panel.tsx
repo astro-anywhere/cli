@@ -4,7 +4,7 @@ import { Panel } from '../layout/panel.js'
 import { Spinner } from '../shared/spinner.js'
 import { useExecutionStore } from '../../stores/execution-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
-import { truncate } from '../../lib/format.js'
+import { getShortId, truncate } from '../../lib/format.js'
 
 interface OutputPanelProps {
   height: number
@@ -31,9 +31,7 @@ export function OutputPanel({ height }: OutputPanelProps) {
 
   let title = 'PROCESS OUTPUT'
   if (execution) {
-    const shortId = execution.nodeId.length > 20
-      ? execution.nodeId.slice(0, 8) + '\u2026'
-      : execution.nodeId
+    const shortId = getShortId(execution.nodeId)
     title = `${shortId} [${execution.status}]`
   }
 

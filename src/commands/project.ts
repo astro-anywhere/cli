@@ -116,12 +116,14 @@ export function registerProjectCommands(program: Command): void {
     .command('update <id>')
     .description('Update a project')
     .option('--name <name>', 'New project name')
+    .option('--icon <emoji>', 'New project icon/emoji')
     .option('--description <desc>', 'New description')
     .option('--status <status>', 'New status')
     .option('--dir <path>', 'New working directory')
     .option('--vision-doc <text>', 'Update vision document')
     .action(async (id: string, cmdOpts: {
       name?: string
+      icon?: string
       description?: string
       status?: string
       dir?: string
@@ -141,13 +143,14 @@ export function registerProjectCommands(program: Command): void {
 
       const patch: Record<string, unknown> = {}
       if (cmdOpts.name !== undefined) patch.name = cmdOpts.name
+      if (cmdOpts.icon !== undefined) patch.icon = cmdOpts.icon
       if (cmdOpts.description !== undefined) patch.description = cmdOpts.description
       if (cmdOpts.status !== undefined) patch.status = cmdOpts.status
       if (cmdOpts.dir !== undefined) patch.workingDirectory = cmdOpts.dir
       if (cmdOpts.visionDoc !== undefined) patch.visionDoc = cmdOpts.visionDoc
 
       if (Object.keys(patch).length === 0) {
-        console.error(chalk.red('No update fields provided. Use --name, --description, --status, --dir, or --vision-doc.'))
+        console.error(chalk.red('No update fields provided. Use --name, --icon, --description, --status, --dir, or --vision-doc.'))
         process.exitCode = 1
         return
       }

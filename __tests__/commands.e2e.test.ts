@@ -205,13 +205,14 @@ describe('CLI e2e', () => {
       expect(output).toContain('Status')
     })
 
-    it('project update modifies project', () => {
+    it('project update modifies project fields including icon', () => {
       if (!serverAvailable || !testProjectId) return
-      const updated = cliJson<{ id: string; description: string }>(
-        `project update ${testProjectId.slice(0, 8)} --description "updated via e2e"`
+      const updated = cliJson<{ id: string; description: string; icon: string }>(
+        `project update ${testProjectId.slice(0, 8)} --description "updated via e2e" --icon "🧪"`
       )
       expect(updated.id).toBe(testProjectId)
       expect(updated.description).toBe('updated via e2e')
+      expect(updated.icon).toBe('🧪')
     })
 
     it('project stats shows statistics', () => {
@@ -561,6 +562,77 @@ describe('CLI e2e', () => {
         // Delete node
         const deleted = cliJson<{ ok: boolean }>(`plan delete-node ${nodeId}`)
         expect(deleted.ok).toBe(true)
+      } finally {
+        cli(`project delete ${projectId}`)
+      }
+    })
+
+    it('dependency flags create and mutate graph edges', () => {
+      if (!serverAvailable) return
+
+      const project = cliJson<{ id: string }>('project create --name "Dependency Edge Test"')
+      const projectId = project.id
+
+      try {
+        const depA = cliJson<{ ok: boolean; id: string }>(
+          `plan create-node --project-id ${projectId} --title "Dependency A" --type task`
+        )
+        const depB = cliJson<{ ok: boolean; id: string }>(
+          `plan create-node --project-id ${projectId} --title "Dependency B" --type task`
+        )
+        const target = cliJson<{ ok: boolean; id: string; edgesAdded: string[] }>(
+          `plan create-node --project-id ${projectId} --title "Target" --type task --dependency ${depA.id}`
+        )
+
+        expect(target.ok).toBe(true)
+        expect(target.edgesAdded).toEqual([depA.id])
+
+        let exported = JSON.parse(cli(`plan export --project-id ${projectId}`)) as {
+          edges: Array<{ source: string; target: string }>
+        }
+        expect(exported.edges).toEqual(
+          expect.arrayContaining([
+            { source: depA.id, target: target.id },
+          ])
+        )
+
+        const addDep = cliJson<{ ok: boolean; addedDependencies: string[]; removedDependencies: string[] }>(
+          `plan update-node ${target.id} --add-dependency ${depB.id}`
+        )
+        expect(addDep.ok).toBe(true)
+        expect(addDep.addedDependencies).toEqual([depB.id])
+        expect(addDep.removedDependencies).toEqual([])
+
+        exported = JSON.parse(cli(`plan export --project-id ${projectId}`)) as {
+          edges: Array<{ source: string; target: string }>
+        }
+        expect(exported.edges).toEqual(
+          expect.arrayContaining([
+            { source: depA.id, target: target.id },
+            { source: depB.id, target: target.id },
+          ])
+        )
+
+        const removeDep = cliJson<{ ok: boolean; addedDependencies: string[]; removedDependencies: string[] }>(
+          `plan update-node ${target.id} --remove-dependency ${depA.id}`
+        )
+        expect(removeDep.ok).toBe(true)
+        expect(removeDep.addedDependencies).toEqual([])
+        expect(removeDep.removedDependencies).toEqual([depA.id])
+
+        exported = JSON.parse(cli(`plan export --project-id ${projectId}`)) as {
+          edges: Array<{ source: string; target: string }>
+        }
+        expect(exported.edges).not.toEqual(
+          expect.arrayContaining([
+            { source: depA.id, target: target.id },
+          ])
+        )
+        expect(exported.edges).toEqual(
+          expect.arrayContaining([
+            { source: depB.id, target: target.id },
+          ])
+        )
       } finally {
         cli(`project delete ${projectId}`)
       }
