@@ -205,13 +205,14 @@ describe('CLI e2e', () => {
       expect(output).toContain('Status')
     })
 
-    it('project update modifies project', () => {
+    it('project update modifies project fields including icon', () => {
       if (!serverAvailable || !testProjectId) return
-      const updated = cliJson<{ id: string; description: string }>(
-        `project update ${testProjectId.slice(0, 8)} --description "updated via e2e"`
+      const updated = cliJson<{ id: string; description: string; icon: string }>(
+        `project update ${testProjectId.slice(0, 8)} --description "updated via e2e" --icon "🧪"`
       )
       expect(updated.id).toBe(testProjectId)
       expect(updated.description).toBe('updated via e2e')
+      expect(updated.icon).toBe('🧪')
     })
 
     it('project stats shows statistics', () => {
