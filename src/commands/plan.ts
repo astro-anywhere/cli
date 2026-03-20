@@ -120,6 +120,17 @@ async function validateNodeIds(
   return errors.length > 0 ? errors.join('\n') : null
 }
 
+function uniqueNodeIds(ids: string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const id of ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    unique.push(id)
+  }
+  return unique
+}
+
 async function readPlanJsonFromStdin(): Promise<string> {
   if (process.stdin.isTTY) {
     throw new Error('No plan JSON received on stdin. Pipe a JSON document into `astro-cli plan create`.')
@@ -450,13 +461,41 @@ export function registerPlanCommands(program: Command): void {
           endDate: cmdOpts.endDate ?? null,
         })
 
+        const edgesAdded: string[] = []
+        for (const depId of uniqueNodeIds(cmdOpts.dependency)) {
+          const edgeId = `edge-${randomUUID()}`
+          try {
+            await client.createPlanEdge({
+              id: edgeId,
+              projectId: cmdOpts.projectId,
+              source: depId,
+              target: id,
+              type: 'dependency',
+            })
+            edgesAdded.push(depId)
+          } catch (edgeErr) {
+            const edgeMsg = edgeErr instanceof Error ? edgeErr.message : String(edgeErr)
+            if (opts.json) {
+              print({ error: `Node created, but failed to create edge ${depId} → ${id}: ${edgeMsg}`, nodeId: id, edgesAdded }, { json: true })
+            } else {
+              console.error(chalk.red(`Failed to create edge ${depId} → ${id}: ${edgeMsg}`))
+              console.error(chalk.yellow(`Node was created (${id}) with ${edgesAdded.length}/${cmdOpts.dependency.length} dependency edges.`))
+            }
+            process.exitCode = 1
+            return
+          }
+        }
+
         if (opts.json) {
-          print({ ok: true, id, projectId: cmdOpts.projectId, title: cmdOpts.title }, { json: true })
+          print({ ok: true, id, projectId: cmdOpts.projectId, title: cmdOpts.title, edgesAdded }, { json: true })
         } else {
           console.log(chalk.green('Node created:'))
           console.log(`  ${chalk.bold('ID')}     ${id}`)
           console.log(`  ${chalk.bold('Title')}  ${cmdOpts.title}`)
           console.log(`  ${chalk.bold('Type')}   ${cmdOpts.type}`)
+          if (edgesAdded.length > 0) {
+            console.log(`  ${chalk.bold('Depends')}  ${edgesAdded.join(', ')}`)
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -505,6 +544,9 @@ export function registerPlanCommands(program: Command): void {
       const client = getClient(opts.serverUrl)
 
       const patch: Record<string, unknown> = {}
+      let dependenciesToAdd: string[] = []
+      let dependenciesToRemove: string[] = []
+      let dependencyProjectId: string | null = null
       if (cmdOpts.title !== undefined) patch.title = cmdOpts.title
       if (cmdOpts.status !== undefined) patch.status = cmdOpts.status
       if (cmdOpts.description !== undefined) patch.description = cmdOpts.description
@@ -517,20 +559,62 @@ export function registerPlanCommands(program: Command): void {
       if (cmdOpts.startDate !== undefined) patch.startDate = cmdOpts.startDate
       if (cmdOpts.endDate !== undefined) patch.endDate = cmdOpts.endDate
 
-      // Handle dependency add/remove: fetch current node, patch dependencies list
+      // Handle dependency add/remove by reconciling the edge graph.
       if (cmdOpts.addDependency.length > 0 || cmdOpts.removeDependency.length > 0) {
         try {
-          const { nodes } = await client.getFullPlan()
-          const node = nodes.find((n: { id: string }) => n.id === nodeId)
+          const { nodes: fullNodes } = await client.getFullPlan()
+          const node = fullNodes.find((n: { id: string }) => n.id === nodeId)
           if (!node) {
             console.error(chalk.red(`Node ${nodeId} not found`))
             process.exitCode = 1
             return
           }
-          const currentDeps: string[] = (node as Record<string, unknown>).dependencies as string[] ?? []
+
+          dependencyProjectId = String((node as Record<string, unknown>).projectId ?? '')
+          if (!dependencyProjectId) {
+            console.error(chalk.red(`Node ${nodeId} is missing a project ID`))
+            process.exitCode = 1
+            return
+          }
+
+          const validationError = await validateNodeIds(
+            client,
+            dependencyProjectId,
+            uniqueNodeIds(cmdOpts.addDependency).map(id => ({ id, role: '--add-dependency' })),
+            opts.json,
+          )
+          if (validationError) {
+            if (opts.json) {
+              print({ error: validationError }, { json: true })
+            } else {
+              console.error(chalk.red(`Validation failed:\n${validationError}`))
+            }
+            process.exitCode = 1
+            return
+          }
+
+          const { nodes } = await client.getPlan(dependencyProjectId)
+          const projectNode = nodes.find((n: { id: string }) => n.id === nodeId)
+          if (!projectNode) {
+            const msg = `Node ${nodeId} not found in project ${dependencyProjectId}`
+            if (opts.json) {
+              print({ error: msg }, { json: true })
+            } else {
+              console.error(chalk.red(msg))
+            }
+            process.exitCode = 1
+            return
+          }
+
+          const currentDeps: string[] = (projectNode as Record<string, unknown>).dependencies as string[] ?? []
           const toRemove = new Set(cmdOpts.removeDependency)
-          const newDeps = [...currentDeps.filter((d: string) => !toRemove.has(d)), ...cmdOpts.addDependency.filter((d: string) => !currentDeps.includes(d))]
-          patch.dependencies = newDeps
+          const newDeps = uniqueNodeIds([
+            ...currentDeps.filter((d: string) => !toRemove.has(d)),
+            ...cmdOpts.addDependency.filter((d: string) => !currentDeps.includes(d)),
+          ])
+          const newDepSet = new Set(newDeps)
+          dependenciesToAdd = newDeps.filter(d => !currentDeps.includes(d))
+          dependenciesToRemove = currentDeps.filter((d: string) => !newDepSet.has(d))
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           if (opts.json) {
@@ -543,19 +627,53 @@ export function registerPlanCommands(program: Command): void {
         }
       }
 
-      if (Object.keys(patch).length === 0) {
+      if (Object.keys(patch).length === 0 && dependenciesToAdd.length === 0 && dependenciesToRemove.length === 0) {
         console.error(chalk.red('No update fields provided.'))
         process.exitCode = 1
         return
       }
 
       try {
-        const result = await client.updatePlanNode(nodeId, patch)
+        let result: { ok: boolean } = { ok: true }
+        if (Object.keys(patch).length > 0) {
+          result = await client.updatePlanNode(nodeId, patch)
+        }
+
+        let removedDependencies: string[] = []
+        if (dependencyProjectId && dependenciesToRemove.length > 0) {
+          const { edges } = await client.getPlan(dependencyProjectId)
+          for (const depId of dependenciesToRemove) {
+            const edge = edges.find((e: { source: string; target: string }) => e.source === depId && e.target === nodeId)
+            if (!edge) continue
+            await client.deletePlanEdge((edge as { id: string }).id)
+            removedDependencies.push(depId)
+          }
+        }
+
+        const addedDependencies: string[] = []
+        if (dependencyProjectId) {
+          for (const depId of dependenciesToAdd) {
+            const edgeId = `edge-${randomUUID()}`
+            await client.createPlanEdge({
+              id: edgeId,
+              projectId: dependencyProjectId,
+              source: depId,
+              target: nodeId,
+              type: 'dependency',
+            })
+            addedDependencies.push(depId)
+          }
+        }
 
         if (opts.json) {
-          print({ ...result, nodeId, updated: Object.keys(patch) }, { json: true })
+          print({ ...result, nodeId, updated: Object.keys(patch), addedDependencies, removedDependencies }, { json: true })
         } else {
-          console.log(chalk.green(`Node ${nodeId} updated: ${Object.keys(patch).join(', ')}`))
+          const changed = [
+            ...Object.keys(patch),
+            ...(addedDependencies.length > 0 ? ['dependencies+'] : []),
+            ...(removedDependencies.length > 0 ? ['dependencies-'] : []),
+          ]
+          console.log(chalk.green(`Node ${nodeId} updated: ${changed.join(', ') || 'no-op'}`))
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)

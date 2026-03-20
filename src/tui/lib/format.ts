@@ -44,6 +44,20 @@ export function truncate(str: string, maxLen: number): string {
   return str.slice(0, maxLen - 1) + '\u2026'
 }
 
+export function getShortId(id: string): string {
+  const normalized = id.replace(/-/g, '').toLowerCase()
+  if (/^[0-9a-f]{32}$/.test(normalized)) {
+    return normalized.slice(0, 6)
+  }
+
+  const tail = id.toLowerCase().split('-').filter(Boolean).at(-1)
+  if (tail && tail.length >= 4) {
+    return tail.slice(-6)
+  }
+
+  return normalized.slice(0, 6)
+}
+
 export function padRight(str: string, len: number): string {
   return str.length >= len ? str.slice(0, len) : str + ' '.repeat(len - str.length)
 }

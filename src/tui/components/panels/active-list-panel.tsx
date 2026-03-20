@@ -13,7 +13,7 @@ import { useExecutionStore } from '../../stores/execution-store.js'
 import { useProjectsStore } from '../../stores/projects-store.js'
 import { usePlanStore } from '../../stores/plan-store.js'
 import { useTuiStore } from '../../stores/tui-store.js'
-import { truncate } from '../../lib/format.js'
+import { getShortId, truncate } from '../../lib/format.js'
 
 interface ActiveListPanelProps {
   height: number
@@ -121,7 +121,7 @@ export function ActiveListPanel({ height }: ActiveListPanelProps) {
         const proj = projects.find((p) => p.id === projectId)
         title = proj?.name ? `Playground: ${proj.name}` : 'Playground Session'
       } else {
-        title = node?.title ?? `Task ${exec.nodeId.slice(0, 8)}`
+        title = node?.title ?? `Task ${getShortId(exec.nodeId)}`
       }
     }
 
