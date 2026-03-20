@@ -190,9 +190,10 @@ export function registerPlanCommands(program: Command): void {
   // ── plan tree ─────────────────────────────────────────────────────
   plan
     .command('tree')
-    .description('Show ASCII dependency tree for a project')
+    .description('Show plan dependency tree (JSON by default)')
     .requiredOption('--project-id <id>', 'Project ID')
-    .action(async (cmdOpts: { projectId: string }) => {
+    .option('--ascii', 'Show ASCII tree instead of JSON')
+    .action(async (cmdOpts: { projectId: string; ascii?: boolean }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
@@ -208,31 +209,33 @@ export function registerPlanCommands(program: Command): void {
       }
 
       if (nodes.length === 0) {
-        console.log(chalk.dim('  No plan nodes found.'))
-        return
-      }
-
-      if (opts.json) {
-        const tree = buildTree(nodes, edges)
-        print(tree, { json: true })
+        if (cmdOpts.ascii && !opts.json) {
+          console.log(chalk.dim('  No plan nodes found.'))
+        } else {
+          print({ nodes: [], edges: [] }, { json: true })
+        }
         return
       }
 
       const tree = buildTree(nodes, edges)
-      const lines = renderTreeLines(tree)
 
-      if (lines.length === 0) {
-        console.log(chalk.dim('  No plan nodes found.'))
-        return
+      // Default to JSON output; use --ascii to get the old ASCII tree
+      if (cmdOpts.ascii && !opts.json) {
+        const lines = renderTreeLines(tree)
+        if (lines.length === 0) {
+          console.log(chalk.dim('  No plan nodes found.'))
+          return
+        }
+        console.log()
+        console.log(chalk.bold(`  Plan tree (${nodes.length} nodes, ${edges.length} edges):`))
+        console.log()
+        for (const line of lines) {
+          console.log(`  ${line}`)
+        }
+        console.log()
+      } else {
+        print(tree, { json: true })
       }
-
-      console.log()
-      console.log(chalk.bold(`  Plan tree (${nodes.length} nodes, ${edges.length} edges):`))
-      console.log()
-      for (const line of lines) {
-        console.log(`  ${line}`)
-      }
-      console.log()
     })
 
   // ── plan create-node ──────────────────────────────────────────────
@@ -538,6 +541,283 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.green('Plan generation complete.'))
       } catch (err) {
         console.error(chalk.red(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`))
+        process.exitCode = 1
+      }
+    })
+
+  // ── plan verify ────────────────────────────────────────────────────
+  plan
+    .command('verify')
+    .description('Verify plan structure rules (JSON by default)')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .option('--fix', 'Auto-fix violations where possible (removes membership edges: task → its own milestone)')
+    .option('--ascii', 'Show human-readable output instead of JSON')
+    .action(async (cmdOpts: { projectId: string; fix?: boolean; ascii?: boolean }) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      interface Violation {
+        rule: string
+        severity: 'error' | 'warning'
+        message: string
+        nodeIds?: string[]
+        edgeIds?: string[]
+      }
+
+      try {
+        const { nodes: allNodes, edges } = await client.getPlan(cmdOpts.projectId)
+        const nodes = allNodes.filter(n => !n.deletedAt)
+        const nodeMap = new Map(nodes.map(n => [n.id, n]))
+        const violations: Violation[] = []
+
+        const milestones = nodes.filter(n => n.type === 'milestone')
+        const tasks = nodes.filter(n => n.type === 'task' || n.type === 'decision')
+
+        // Build adjacency for cycle detection
+        const adj = new Map<string, string[]>()
+        for (const n of nodes) adj.set(n.id, [])
+        for (const e of edges) {
+          if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
+            adj.get(e.source)!.push(e.target)
+          }
+        }
+
+        // ── Rule 1: Dangling edge references ──────────────────────────
+        for (const e of edges) {
+          if (!nodeMap.has(e.source) || !nodeMap.has(e.target)) {
+            violations.push({
+              rule: 'DANGLING_EDGE',
+              severity: 'error',
+              message: `Edge ${e.id} references non-existent node(s): source="${e.source}" target="${e.target}"`,
+              edgeIds: [e.id],
+            })
+          }
+        }
+
+        // ── Rule 2: Membership edges (task → its own milestone) ────────
+        // These are redundant — milestoneId alone represents membership.
+        // A task→milestone edge where the task's milestoneId === that milestone is a membership edge,
+        // not a dependency edge, and should not exist in the graph.
+        const membershipEdges: typeof edges = []
+        for (const e of edges) {
+          const sourceNode = nodeMap.get(e.source)
+          const targetNode = nodeMap.get(e.target)
+          if (
+            sourceNode &&
+            targetNode &&
+            targetNode.type === 'milestone' &&
+            (sourceNode as Record<string, unknown>)['milestoneId'] === targetNode.id
+          ) {
+            membershipEdges.push(e)
+            violations.push({
+              rule: 'MEMBERSHIP_EDGE',
+              severity: 'warning',
+              message: `Edge "${sourceNode.title}" → "${targetNode.title}" is a membership edge (task already linked via milestoneId). Should be removed.`,
+              edgeIds: [e.id],
+            })
+          }
+        }
+
+        // ── Rule 3: Membership deadlock ────────────────────────────────
+        // A task depends on (has an edge from) a milestone it also belongs to via milestoneId.
+        for (const task of tasks) {
+          const milestoneId = (task as Record<string, unknown>)['milestoneId'] as string | null
+          if (!milestoneId) continue
+          const incomingFromOwnMilestone = edges.some(e => e.source === milestoneId && e.target === task.id)
+          if (incomingFromOwnMilestone) {
+            const m = nodeMap.get(milestoneId)
+            violations.push({
+              rule: 'MEMBERSHIP_DEADLOCK',
+              severity: 'error',
+              message: `Task "${task.title}" belongs to milestone "${m?.title ?? milestoneId}" (milestoneId) AND depends on it (edge) — unresolvable cycle.`,
+              nodeIds: [task.id, milestoneId],
+            })
+          }
+        }
+
+        // ── Rule 4: Tasks missing milestoneId ─────────────────────────
+        for (const task of tasks) {
+          const milestoneId = (task as Record<string, unknown>)['milestoneId'] as string | null
+          if (!milestoneId) {
+            violations.push({
+              rule: 'MISSING_MILESTONE_ID',
+              severity: 'warning',
+              message: `Task "${task.title}" has no milestoneId — every task should belong to a milestone.`,
+              nodeIds: [task.id],
+            })
+          }
+        }
+
+        // ── Rule 5: Milestones with no member tasks ────────────────────
+        const milestoneMembers = new Map<string, string[]>()
+        for (const m of milestones) milestoneMembers.set(m.id, [])
+        for (const task of tasks) {
+          const mid = (task as Record<string, unknown>)['milestoneId'] as string | null
+          if (mid && milestoneMembers.has(mid)) {
+            milestoneMembers.get(mid)!.push(task.id)
+          }
+        }
+        for (const m of milestones) {
+          if ((milestoneMembers.get(m.id) ?? []).length === 0) {
+            violations.push({
+              rule: 'EMPTY_MILESTONE',
+              severity: 'warning',
+              message: `Milestone "${m.title}" has no member tasks (no task has milestoneId = "${m.id}").`,
+              nodeIds: [m.id],
+            })
+          }
+        }
+
+        // ── Rule 6: Non-final milestones with no outgoing edges ────────
+        // "Final" milestones are those with no outgoing edges to OTHER milestones.
+        // Non-final milestones that have zero outgoing edges at all are dead ends.
+        const milestoneIds = new Set(milestones.map(m => m.id))
+        const milestonesWithDownstreamMilestone = new Set(
+          edges
+            .filter(e => milestoneIds.has(e.source) && milestoneIds.has(e.target))
+            .map(e => e.source)
+        )
+        const finalMilestones = new Set(
+          milestones
+            .filter(m => !milestonesWithDownstreamMilestone.has(m.id))
+            .map(m => m.id)
+        )
+
+        const outgoing = new Map<string, number>()
+        for (const n of nodes) outgoing.set(n.id, 0)
+        for (const e of edges) {
+          if (nodeMap.has(e.source)) outgoing.set(e.source, (outgoing.get(e.source) ?? 0) + 1)
+        }
+
+        for (const m of milestones) {
+          if (!finalMilestones.has(m.id) && (outgoing.get(m.id) ?? 0) === 0) {
+            violations.push({
+              rule: 'DEAD_END_MILESTONE',
+              severity: 'error',
+              message: `Milestone "${m.title}" has no outgoing edges — it gates nothing. All non-final milestones must have downstream dependents.`,
+              nodeIds: [m.id],
+            })
+          }
+        }
+
+        // ── Rule 7: Milestone missing dates ───────────────────────────
+        for (const m of milestones) {
+          if (!m.startDate || !m.endDate) {
+            violations.push({
+              rule: 'MILESTONE_MISSING_DATES',
+              severity: 'warning',
+              message: `Milestone "${m.title}" is missing startDate and/or endDate.`,
+              nodeIds: [m.id],
+            })
+          }
+        }
+
+        // ── Rule 8: GitHub push task should depend on final milestone ──
+        const githubTasks = tasks.filter(t => t.title.toLowerCase().includes('push to github') || t.title.toLowerCase().includes('github push'))
+        for (const ghTask of githubTasks) {
+          const deps = (ghTask.dependencies ?? []) as string[]
+          const dependsOnFinal = deps.some(d => finalMilestones.has(d))
+          if (!dependsOnFinal && finalMilestones.size > 0) {
+            violations.push({
+              rule: 'GITHUB_PUSH_NOT_ON_FINAL_MILESTONE',
+              severity: 'warning',
+              message: `"${ghTask.title}" does not depend on the final milestone. It should depend on the last milestone to ensure all work is complete.`,
+              nodeIds: [ghTask.id, ...finalMilestones],
+            })
+          }
+        }
+
+        // ── Rule 9: Cycle detection (DFS) ─────────────────────────────
+        const visited = new Set<string>()
+        const inStack = new Set<string>()
+        let cyclePath: string[] = []
+
+        function dfs(id: string): boolean {
+          if (inStack.has(id)) {
+            // Found cycle start — record it
+            cyclePath.length = 0
+            cyclePath.push(id)
+            return true
+          }
+          if (visited.has(id)) return false
+          inStack.add(id)
+          for (const neighbor of (adj.get(id) ?? [])) {
+            if (dfs(neighbor)) {
+              // Collect nodes as we unwind the stack back to the cycle entry
+              cyclePath.push(id)
+              return true
+            }
+          }
+          inStack.delete(id)
+          visited.add(id)
+          return false
+        }
+
+        for (const n of nodes) {
+          if (!visited.has(n.id) && dfs(n.id)) break
+        }
+        if (cyclePath.length > 0) {
+          const reversed = cyclePath.reverse()
+          const names = reversed.map(id => nodeMap.get(id)?.title ?? id)
+          violations.push({
+            rule: 'CYCLE',
+            severity: 'error',
+            message: `Graph contains a cycle involving: ${names.join(' → ')}`,
+            nodeIds: reversed,
+          })
+        }
+
+        // ── Auto-fix: remove membership edges ─────────────────────────
+        const fixed: string[] = []
+        if (cmdOpts.fix && membershipEdges.length > 0) {
+          for (const e of membershipEdges) {
+            try {
+              await client.deletePlanEdge(e.id)
+              fixed.push(e.id)
+            } catch (fixErr) {
+              console.error(chalk.yellow(`  Could not auto-fix edge ${e.id}: ${fixErr instanceof Error ? fixErr.message : String(fixErr)}`))
+            }
+          }
+        }
+
+        const errors = violations.filter(v => v.severity === 'error')
+        const warnings = violations.filter(v => v.severity === 'warning')
+        const ok = errors.length === 0
+
+        // Default to JSON; use --ascii for human-readable output
+        if (cmdOpts.ascii && !opts.json) {
+          console.log()
+          if (ok && warnings.length === 0) {
+            console.log(chalk.green('  ✓ Plan is valid — no violations found.'))
+          } else {
+            if (errors.length > 0) {
+              console.log(chalk.red(`  ✗ ${errors.length} error${errors.length === 1 ? '' : 's'}, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
+            } else {
+              console.log(chalk.yellow(`  ⚠  0 errors, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
+            }
+            console.log()
+            for (const v of violations) {
+              const icon = v.severity === 'error' ? chalk.red('✗') : chalk.yellow('⚠')
+              const rule = chalk.dim(`[${v.rule}]`)
+              console.log(`  ${icon} ${rule} ${v.message}`)
+            }
+          }
+
+          if (fixed.length > 0) {
+            console.log()
+            console.log(chalk.green(`  Fixed: removed ${fixed.length} membership edge${fixed.length === 1 ? '' : 's'}.`))
+          } else if (cmdOpts.fix && membershipEdges.length === 0) {
+            console.log(chalk.dim('  --fix: nothing to auto-fix.'))
+          }
+
+          console.log()
+          if (!ok) process.exitCode = 1
+        } else {
+          print({ ok, violations, fixed }, { json: true })
+          if (!ok) process.exitCode = 1
+        }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
         process.exitCode = 1
       }
     })
