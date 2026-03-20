@@ -1,4 +1,5 @@
 import type { Command } from 'commander'
+import { randomUUID } from 'node:crypto'
 import { getClient, streamDispatchToStdout } from '../client.js'
 import { print, formatRelativeTime, formatStatus, type ColumnDef } from '../output.js'
 import { createApprovalHandler } from '../chat-utils.js'
@@ -125,10 +126,15 @@ async function readPlanJsonFromStdin(): Promise<string> {
   }
 
   return new Promise((resolve, reject) => {
+    const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
     let raw = ''
     process.stdin.setEncoding('utf8')
     process.stdin.on('data', (chunk) => {
       raw += chunk
+      if (Buffer.byteLength(raw) > MAX_BYTES) {
+        process.stdin.destroy()
+        reject(new Error('Plan JSON exceeds 50 MB limit'))
+      }
     })
     process.stdin.on('end', () => {
       resolve(raw)
@@ -160,6 +166,23 @@ export function registerPlanCommands(program: Command): void {
 
         if (!Array.isArray(nodes) || !Array.isArray(edges)) {
           throw new Error('Plan JSON must be an object with `nodes` and `edges` arrays.')
+        }
+
+        // Validate minimum structural requirements before replacing the entire plan
+        for (const node of nodes) {
+          const n = node as Record<string, unknown>
+          if (typeof n.id !== 'string' || !n.id) {
+            throw new Error(`Node missing required string field "id": ${JSON.stringify(node).slice(0, 200)}`)
+          }
+          if (typeof n.title !== 'string' || !n.title) {
+            throw new Error(`Node "${n.id}" missing required string field "title"`)
+          }
+        }
+        for (const edge of edges) {
+          const e = edge as Record<string, unknown>
+          if (typeof e.source !== 'string' || typeof e.target !== 'string') {
+            throw new Error(`Edge missing required "source"/"target" string fields: ${JSON.stringify(edge).slice(0, 200)}`)
+          }
         }
 
         const result = await client.setPlan(
@@ -689,7 +712,7 @@ export function registerPlanCommands(program: Command): void {
         return
       }
 
-      const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const id = `node-${randomUUID()}`
       const description =
         `Open a pull request on ${cmdOpts.repo} merging the project branch into \`${cmdOpts.baseBranch}\`. ` +
         `Steps: (1) rebase onto latest ${cmdOpts.baseBranch} and resolve any conflicts, force-pushing with --force-with-lease; ` +
@@ -719,9 +742,17 @@ export function registerPlanCommands(program: Command): void {
         // Create dependency edges
         const edgesAdded: string[] = []
         for (const depId of cmdOpts.dependsOn) {
-          const edgeId = `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-          await client.createPlanEdge({ id: edgeId, projectId: cmdOpts.projectId, source: depId, target: id, type: 'dependency' })
-          edgesAdded.push(depId)
+          const edgeId = `edge-${randomUUID()}`
+          try {
+            await client.createPlanEdge({ id: edgeId, projectId: cmdOpts.projectId, source: depId, target: id, type: 'dependency' })
+            edgesAdded.push(depId)
+          } catch (edgeErr) {
+            const edgeMsg = edgeErr instanceof Error ? edgeErr.message : String(edgeErr)
+            console.error(chalk.red(`Failed to create edge ${depId} → ${id}: ${edgeMsg}`))
+            console.error(chalk.yellow(`Node was created (${id}) with ${edgesAdded.length}/${cmdOpts.dependsOn.length} edges. Run "plan verify" to check plan state.`))
+            process.exitCode = 1
+            return
+          }
         }
 
         if (opts.json) {
@@ -1041,14 +1072,25 @@ export function registerPlanCommands(program: Command): void {
         }
 
         // ── Rule 6: Non-final milestones with no outgoing edges ────────
+        // "Final" milestones are those with no outgoing edges to OTHER milestones.
+        // Non-final milestones that have zero outgoing edges at all are dead ends.
+        const milestoneIds = new Set(milestones.map(m => m.id))
+        const milestonesWithDownstreamMilestone = new Set(
+          edges
+            .filter(e => milestoneIds.has(e.source) && milestoneIds.has(e.target))
+            .map(e => e.source)
+        )
+        const finalMilestones = new Set(
+          milestones
+            .filter(m => !milestonesWithDownstreamMilestone.has(m.id))
+            .map(m => m.id)
+        )
+
         const outgoing = new Map<string, number>()
         for (const n of nodes) outgoing.set(n.id, 0)
         for (const e of edges) {
           if (nodeMap.has(e.source)) outgoing.set(e.source, (outgoing.get(e.source) ?? 0) + 1)
         }
-        // The "final" milestone is the one with no outgoing edges to other milestones
-        const milestonesWithNoOutgoing = milestones.filter(m => (outgoing.get(m.id) ?? 0) === 0)
-        const finalMilestones = new Set(milestonesWithNoOutgoing.map(m => m.id))
 
         for (const m of milestones) {
           if (!finalMilestones.has(m.id) && (outgoing.get(m.id) ?? 0) === 0) {
@@ -1091,29 +1133,42 @@ export function registerPlanCommands(program: Command): void {
         // ── Rule 9: Cycle detection (DFS) ─────────────────────────────
         const visited = new Set<string>()
         const inStack = new Set<string>()
-        const cycleNodes: string[] = []
+        let cyclePath: string[] = []
 
         function dfs(id: string): boolean {
-          if (inStack.has(id)) { cycleNodes.push(id); return true }
+          if (inStack.has(id)) {
+            // Found cycle start — record it
+            cyclePath.length = 0
+            cyclePath.push(id)
+            return true
+          }
           if (visited.has(id)) return false
-          visited.add(id); inStack.add(id)
+          inStack.add(id)
           for (const neighbor of (adj.get(id) ?? [])) {
-            if (dfs(neighbor)) { cycleNodes.push(id); return true }
+            if (dfs(neighbor)) {
+              if (cyclePath.length > 0 && cyclePath[0] !== id) {
+                // Still unwinding to the cycle start — collect path
+                cyclePath.push(id)
+              }
+              return true
+            }
           }
           inStack.delete(id)
+          visited.add(id)
           return false
         }
 
         for (const n of nodes) {
           if (!visited.has(n.id) && dfs(n.id)) break
         }
-        if (cycleNodes.length > 0) {
-          const names = [...new Set(cycleNodes)].map(id => nodeMap.get(id)?.title ?? id)
+        if (cyclePath.length > 0) {
+          const reversed = cyclePath.reverse()
+          const names = reversed.map(id => nodeMap.get(id)?.title ?? id)
           violations.push({
             rule: 'CYCLE',
             severity: 'error',
             message: `Graph contains a cycle involving: ${names.join(' → ')}`,
-            nodeIds: [...new Set(cycleNodes)],
+            nodeIds: reversed,
           })
         }
 
