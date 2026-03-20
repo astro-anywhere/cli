@@ -325,9 +325,10 @@ export function registerPlanCommands(program: Command): void {
   // ── plan tree ─────────────────────────────────────────────────────
   plan
     .command('tree')
-    .description('Show ASCII dependency tree for a project')
+    .description('Show plan dependency tree (JSON by default)')
     .requiredOption('--project-id <id>', 'Project ID')
-    .action(async (cmdOpts: { projectId: string }) => {
+    .option('--ascii', 'Show ASCII tree instead of JSON')
+    .action(async (cmdOpts: { projectId: string; ascii?: boolean }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
@@ -343,31 +344,33 @@ export function registerPlanCommands(program: Command): void {
       }
 
       if (nodes.length === 0) {
-        console.log(chalk.dim('  No plan nodes found.'))
-        return
-      }
-
-      if (opts.json) {
-        const tree = buildTree(nodes, edges)
-        print(tree, { json: true })
+        if (cmdOpts.ascii && !opts.json) {
+          console.log(chalk.dim('  No plan nodes found.'))
+        } else {
+          print({ nodes: [], edges: [] }, { json: true })
+        }
         return
       }
 
       const tree = buildTree(nodes, edges)
-      const lines = renderTreeLines(tree)
 
-      if (lines.length === 0) {
-        console.log(chalk.dim('  No plan nodes found.'))
-        return
+      // Default to JSON output; use --ascii to get the old ASCII tree
+      if (cmdOpts.ascii && !opts.json) {
+        const lines = renderTreeLines(tree)
+        if (lines.length === 0) {
+          console.log(chalk.dim('  No plan nodes found.'))
+          return
+        }
+        console.log()
+        console.log(chalk.bold(`  Plan tree (${nodes.length} nodes, ${edges.length} edges):`))
+        console.log()
+        for (const line of lines) {
+          console.log(`  ${line}`)
+        }
+        console.log()
+      } else {
+        print(tree, { json: true })
       }
-
-      console.log()
-      console.log(chalk.bold(`  Plan tree (${nodes.length} nodes, ${edges.length} edges):`))
-      console.log()
-      for (const line of lines) {
-        console.log(`  ${line}`)
-      }
-      console.log()
     })
 
   // ── plan create-node ──────────────────────────────────────────────
@@ -959,10 +962,11 @@ export function registerPlanCommands(program: Command): void {
   // ── plan verify ────────────────────────────────────────────────────
   plan
     .command('verify')
-    .description('Verify plan structure rules (DAG validity, milestone membership, no deadlocks, etc.)')
+    .description('Verify plan structure rules (JSON by default)')
     .requiredOption('--project-id <id>', 'Project ID')
     .option('--fix', 'Auto-fix violations where possible (removes membership edges: task → its own milestone)')
-    .action(async (cmdOpts: { projectId: string; fix?: boolean }) => {
+    .option('--ascii', 'Show human-readable output instead of JSON')
+    .action(async (cmdOpts: { projectId: string; fix?: boolean; ascii?: boolean }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
@@ -1194,38 +1198,38 @@ export function registerPlanCommands(program: Command): void {
         const warnings = violations.filter(v => v.severity === 'warning')
         const ok = errors.length === 0
 
-        if (opts.json) {
+        // Default to JSON; use --ascii for human-readable output
+        if (cmdOpts.ascii && !opts.json) {
+          console.log()
+          if (ok && warnings.length === 0) {
+            console.log(chalk.green('  ✓ Plan is valid — no violations found.'))
+          } else {
+            if (errors.length > 0) {
+              console.log(chalk.red(`  ✗ ${errors.length} error${errors.length === 1 ? '' : 's'}, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
+            } else {
+              console.log(chalk.yellow(`  ⚠  0 errors, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
+            }
+            console.log()
+            for (const v of violations) {
+              const icon = v.severity === 'error' ? chalk.red('✗') : chalk.yellow('⚠')
+              const rule = chalk.dim(`[${v.rule}]`)
+              console.log(`  ${icon} ${rule} ${v.message}`)
+            }
+          }
+
+          if (fixed.length > 0) {
+            console.log()
+            console.log(chalk.green(`  Fixed: removed ${fixed.length} membership edge${fixed.length === 1 ? '' : 's'}.`))
+          } else if (cmdOpts.fix && membershipEdges.length === 0) {
+            console.log(chalk.dim('  --fix: nothing to auto-fix.'))
+          }
+
+          console.log()
+          if (!ok) process.exitCode = 1
+        } else {
           print({ ok, violations, fixed }, { json: true })
           if (!ok) process.exitCode = 1
-          return
         }
-
-        console.log()
-        if (ok && warnings.length === 0) {
-          console.log(chalk.green('  ✓ Plan is valid — no violations found.'))
-        } else {
-          if (errors.length > 0) {
-            console.log(chalk.red(`  ✗ ${errors.length} error${errors.length === 1 ? '' : 's'}, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
-          } else {
-            console.log(chalk.yellow(`  ⚠  0 errors, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`))
-          }
-          console.log()
-          for (const v of violations) {
-            const icon = v.severity === 'error' ? chalk.red('✗') : chalk.yellow('⚠')
-            const rule = chalk.dim(`[${v.rule}]`)
-            console.log(`  ${icon} ${rule} ${v.message}`)
-          }
-        }
-
-        if (fixed.length > 0) {
-          console.log()
-          console.log(chalk.green(`  Fixed: removed ${fixed.length} membership edge${fixed.length === 1 ? '' : 's'}.`))
-        } else if (cmdOpts.fix && membershipEdges.length === 0) {
-          console.log(chalk.dim('  --fix: nothing to auto-fix.'))
-        }
-
-        console.log()
-        if (!ok) process.exitCode = 1
       } catch (err) {
         console.error(chalk.red((err as Error).message))
         process.exitCode = 1
