@@ -339,6 +339,7 @@ export function registerPlanCommands(program: Command): void {
     .description('Show plan dependency tree (JSON by default)')
     .requiredOption('--project-id <id>', 'Project ID')
     .option('--ascii', 'Show ASCII tree instead of JSON')
+    .allowUnknownOption()
     .action(async (cmdOpts: { projectId: string; ascii?: boolean }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
@@ -388,6 +389,7 @@ export function registerPlanCommands(program: Command): void {
   plan
     .command('create-node')
     .description('Create a new plan node')
+    .allowUnknownOption()
     .requiredOption('--project-id <id>', 'Project ID')
     .requiredOption('--title <title>', 'Node title')
     .option('--type <type>', 'Node type: task, milestone, decision', 'task')
@@ -1084,6 +1086,7 @@ export function registerPlanCommands(program: Command): void {
     .requiredOption('--project-id <id>', 'Project ID')
     .option('--fix', 'Auto-fix violations where possible (removes membership edges: task → its own milestone)')
     .option('--ascii', 'Show human-readable output instead of JSON')
+    .allowUnknownOption()
     .action(async (cmdOpts: { projectId: string; fix?: boolean; ascii?: boolean }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
