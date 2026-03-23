@@ -844,17 +844,41 @@ export function registerPlanCommands(program: Command): void {
 
       const id = `node-${randomUUID()}`
       const description =
-        `Open a pull request on ${cmdOpts.repo} merging the project branch into \`${cmdOpts.baseBranch}\`. ` +
-        `Steps: (1) rebase onto latest ${cmdOpts.baseBranch} and resolve any conflicts, force-pushing with --force-with-lease; ` +
-        `(2) create the PR with a comprehensive summary of all completed tasks and key changes; ` +
-        `(3) wait for CI checks to pass — if any fail, read the feedback, fix, push, and recheck up to 3 cycles. ` +
-        `The task succeeds when all required CI checks pass.`
+        `Open a pull request on ${cmdOpts.repo} merging the project branch into \`${cmdOpts.baseBranch}\`, then review and fix all issues before marking it ready.\n\n` +
+        `## Steps\n\n` +
+        `1. Rebase onto latest \`${cmdOpts.baseBranch}\` and resolve any conflicts, force-pushing with \`--force-with-lease\`.\n` +
+        `2. Create the PR with a comprehensive summary of all completed tasks and key changes.\n` +
+        `3. Wait for CI checks to pass — if any fail, read the feedback, fix, push, and recheck up to 3 cycles.\n` +
+        `4. Run a code review on the PR (see below) and fix all Critical/Important issues.\n` +
+        `5. The task succeeds when CI passes AND the review verdict is "Approve".\n\n` +
+        `## Code Review Instructions\n\n` +
+        `After the PR is created and CI passes, review the full diff:\n\n` +
+        `### Security (Critical)\n` +
+        `- Injection (SQL, command, XSS, path traversal)\n` +
+        `- Credential exposure (secrets in code, .env committed, API keys in logs)\n` +
+        `- Access control (missing auth checks, cross-user data leaks)\n\n` +
+        `### Data Integrity (Critical)\n` +
+        `- Silent failures (catch blocks that swallow errors)\n` +
+        `- Race conditions (async without proper locking)\n` +
+        `- Missing validation (API routes without schema validation)\n\n` +
+        `### Logic Errors (Important)\n` +
+        `- Incorrect control flow, missing early returns, inverted checks\n` +
+        `- Unsafe casts, missing null checks\n` +
+        `- Errors caught but not re-thrown or surfaced\n\n` +
+        `### Triage\n` +
+        `- **Critical** — MUST fix: security, data loss, broken functionality, build failures\n` +
+        `- **Important** — SHOULD fix: type safety, missing validation, lint errors\n` +
+        `- **Suggestions** — SKIP unless trivial (< 5 lines)\n\n` +
+        `Only flag issues **introduced by this PR**, not pre-existing problems. ` +
+        `For each Critical/Important issue: implement the minimal fix, run build + tests to verify. ` +
+        `Commit fixes, push, and re-check CI. Retry up to 3 times.\n\n` +
+        `Post the review summary as a PR comment with verdict: Approve | Approve with suggestions | Changes remaining.`
 
       try {
         await client.createPlanNode({
           id,
           projectId: cmdOpts.projectId,
-          title: 'Push to GitHub',
+          title: 'Create PR and run code review',
           type: 'task',
           description,
           status: 'planned',
