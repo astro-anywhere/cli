@@ -368,7 +368,9 @@ describe('CLI plan create E2E', () => {
       cli(`--json plan create --project-id ${testProjectId} --file ${filePath}`)
       expect.fail('Should have thrown')
     } catch (err) {
-      const msg = (err as Error).message || String(err)
+      // execSync throws with stdout in err.stdout (not err.message) on non-zero exit
+      const errObj = err as { stdout?: string; message?: string }
+      const msg = errObj.stdout || errObj.message || String(err)
       expect(msg).toContain('Invalid JSON')
     }
   })
@@ -383,7 +385,9 @@ describe('CLI plan create E2E', () => {
       cli(`--json plan create --project-id ${testProjectId} --file ${filePath}`)
       expect.fail('Should have thrown')
     } catch (err) {
-      const msg = (err as Error).message || String(err)
+      // execSync throws with stdout in err.stdout (not err.message) on non-zero exit
+      const errObj = err as { stdout?: string; message?: string }
+      const msg = errObj.stdout || errObj.message || String(err)
       expect(msg).toContain('nodes')
     }
   })

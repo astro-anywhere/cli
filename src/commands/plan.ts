@@ -247,7 +247,10 @@ export function registerPlanCommands(program: Command): void {
           updatedAt: new Date().toISOString(),
         }))
 
-        // Build edges from explicit edges array + node dependencies
+        // Build edges from explicit edges array + node dependencies.
+        // Edge IDs are not added to idMap — resolveId falls through to the identity
+        // branch (id ?? id), so caller-supplied edge IDs pass through unchanged.
+        // Source/target are resolved so callers can use short node IDs here too.
         const planEdges: Array<Record<string, unknown>> = (inputEdges as Array<Record<string, unknown>>).map((edge) => ({
           id: edge.id ? resolveId(String(edge.id)) : randomUUID(),
           projectId: cmdOpts.projectId,
