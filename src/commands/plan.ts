@@ -969,6 +969,7 @@ export function registerPlanCommands(program: Command): void {
           dueDate: null,
           startDate: null,
           endDate: null,
+          metadata: { pushToGithub: true },
         })
 
         // Create dependency edges

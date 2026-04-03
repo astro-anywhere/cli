@@ -429,6 +429,7 @@ export class AstroClient {
     startDate?: string | null
     endDate?: string | null
     position?: { x: number; y: number }
+    metadata?: Record<string, unknown>
   }): Promise<{ ok: boolean }> {
     return this.post('/api/data/plan/nodes', {
       type: 'task',
