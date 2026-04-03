@@ -169,21 +169,38 @@ export function registerPlanCommands(program: Command): void {
   // ── plan create ───────────────────────────────────────────────────
   plan
     .command('create')
-    .description('Create or replace a full project plan from JSON on stdin')
+    .description('Create or replace a full project plan from JSON (stdin or --file). Accepts { nodes: [...], edges: [...] }. Short IDs are mapped to UUIDs automatically.')
     .requiredOption('--project-id <id>', 'Project ID')
-    .action(async (cmdOpts: { projectId: string }) => {
+    .option('--file <path>', 'JSON file path (reads stdin if omitted)')
+    .action(async (cmdOpts: { projectId: string; file?: string }) => {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
       try {
-        const raw = await readPlanJsonFromStdin()
-        const parsed = JSON.parse(raw) as Record<string, unknown>
+        let raw: string
+        if (cmdOpts.file) {
+          const { readFileSync } = await import('fs')
+          raw = readFileSync(cmdOpts.file, 'utf-8')
+        } else {
+          raw = await readPlanJsonFromStdin()
+        }
+
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(raw) as Record<string, unknown>
+        } catch {
+          throw new Error('Invalid JSON input')
+        }
+
         const nodes = parsed.nodes
-        const edges = parsed.edges
+        const inputEdges = parsed.edges || []
         const projectName = typeof parsed.projectName === 'string' ? parsed.projectName : undefined
 
-        if (!Array.isArray(nodes) || !Array.isArray(edges)) {
-          throw new Error('Plan JSON must be an object with `nodes` and `edges` arrays.')
+        if (!Array.isArray(nodes)) {
+          throw new Error('Plan JSON must contain a "nodes" array.')
+        }
+        if (!Array.isArray(inputEdges)) {
+          throw new Error('Plan JSON "edges" field must be an array.')
         }
 
         // Validate minimum structural requirements before replacing the entire plan
@@ -196,36 +213,97 @@ export function registerPlanCommands(program: Command): void {
             throw new Error(`Node "${n.id}" missing required string field "title"`)
           }
         }
-        for (const edge of edges) {
+        for (const edge of inputEdges) {
           const e = edge as Record<string, unknown>
           if (typeof e.source !== 'string' || typeof e.target !== 'string') {
             throw new Error(`Edge missing required "source"/"target" string fields: ${JSON.stringify(edge).slice(0, 200)}`)
           }
         }
 
+        // Map short IDs (n1, m1, etc.) → UUIDs
+        const { randomUUID } = await import('crypto')
+        const idMap = new Map<string, string>()
+        for (const node of nodes as Array<Record<string, unknown>>) {
+          const shortId = String(node.id)
+          idMap.set(shortId, randomUUID())
+        }
+        const resolveId = (id: string) => idMap.get(id) ?? id
+
+        const planNodes = (nodes as Array<Record<string, unknown>>).map((node) => ({
+          id: resolveId(String(node.id)),
+          projectId: cmdOpts.projectId,
+          type: String(node.type || 'task'),
+          title: String(node.title || ''),
+          description: String(node.description || ''),
+          status: String(node.status || 'planned'),
+          verification: String(node.verification || 'auto'),
+          priority: node.priority ? String(node.priority) : null,
+          estimate: node.estimate ? String(node.estimate) : null,
+          startDate: node.startDate ? String(node.startDate) : null,
+          endDate: node.endDate ? String(node.endDate) : null,
+          milestoneId: node.milestoneId ? resolveId(String(node.milestoneId)) : null,
+          position: { x: 0, y: 0 },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }))
+
+        // Build edges from explicit edges array + node dependencies.
+        // Edge IDs are not added to idMap — resolveId falls through to the identity
+        // branch (id ?? id), so caller-supplied edge IDs pass through unchanged.
+        // Source/target are resolved so callers can use short node IDs here too.
+        const planEdges: Array<Record<string, unknown>> = (inputEdges as Array<Record<string, unknown>>).map((edge) => ({
+          id: edge.id ? resolveId(String(edge.id)) : randomUUID(),
+          projectId: cmdOpts.projectId,
+          source: resolveId(String(edge.source)),
+          target: resolveId(String(edge.target)),
+          type: String(edge.type || 'dependency'),
+        }))
+
+        for (const node of nodes as Array<Record<string, unknown>>) {
+          const deps = node.dependencies as string[] | undefined
+          if (Array.isArray(deps)) {
+            for (const depId of deps) {
+              planEdges.push({
+                id: randomUUID(),
+                projectId: cmdOpts.projectId,
+                source: resolveId(depId),
+                target: resolveId(String(node.id)),
+                type: 'dependency',
+              })
+            }
+          }
+        }
+
         const result = await client.setPlan(
           cmdOpts.projectId,
-          nodes as Array<Record<string, unknown>>,
-          edges as Array<Record<string, unknown>>,
+          planNodes,
+          planEdges,
           projectName,
         )
 
         if (opts.json) {
+          const mapping: Record<string, string> = {}
+          for (const [shortId, uuid] of idMap) mapping[shortId] = uuid
           print({
             ...result,
+            ok: true,
             projectId: cmdOpts.projectId,
             projectName,
-            nodeCount: nodes.length,
-            edgeCount: edges.length,
+            nodeCount: planNodes.length,
+            edgeCount: planEdges.length,
+            idMapping: mapping,
           }, { json: true })
         } else {
-          console.log(chalk.green('Plan created:'))
-          console.log(`  ${chalk.bold('Project ID')}  ${cmdOpts.projectId}`)
+          console.log(chalk.green(`Plan created: ${planNodes.length} nodes, ${planEdges.length} edges`))
           if (projectName) {
-            console.log(`  ${chalk.bold('Name')}        ${projectName}`)
+            console.log(`  ${chalk.bold('Name')}  ${projectName}`)
           }
-          console.log(`  ${chalk.bold('Nodes')}       ${nodes.length}`)
-          console.log(`  ${chalk.bold('Edges')}       ${edges.length}`)
+          console.log()
+          console.log(chalk.bold('  ID Mapping:'))
+          for (const [shortId, uuid] of idMap) {
+            const node = (nodes as Array<Record<string, unknown>>).find(n => String(n.id) === shortId)
+            console.log(`    ${chalk.dim(shortId)} → ${uuid} ${chalk.dim(`(${node?.title || '?'})`)}`)
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
