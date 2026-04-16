@@ -91,6 +91,31 @@ export function registerProjectCommands(program: Command): void {
     .option('--dir <path>', 'Working directory')
     .action(async (cmdOpts: { name: string; description: string; dir?: string }) => {
       const opts = program.opts()
+
+      // Hard guard: when the CLI runs inside a dispatched agent session
+      // (ASTRO_EXECUTION_ID is set), creating a new project would orphan
+      // any tasks the agent adds — they'd land in a project that isn't
+      // the session's project and isn't visible in the sidebar. The agent
+      // should operate on ASTRO_PROJECT_ID and use `task create` / `plan add`.
+      if (process.env.ASTRO_EXECUTION_ID) {
+        const sessionProject = process.env.ASTRO_PROJECT_ID
+        const msg = [
+          'Refusing to create a new project inside a dispatched agent session.',
+          sessionProject
+            ? `You are already operating on project ${sessionProject}.`
+            : 'You are already operating inside a session project.',
+          'Use `astro-cli task create` or `astro-cli plan add` to add work to the current project.',
+          'If you truly need to create a separate project, run this command outside the agent session.',
+        ].join(' ')
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(msg))
+        }
+        process.exitCode = 1
+        return
+      }
+
       const client = getClient(opts.serverUrl)
 
       const created = await client.createProject({
