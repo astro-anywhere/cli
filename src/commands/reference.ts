@@ -23,7 +23,7 @@ export function registerReferenceCommands(program: Command): void {
 
       let refs: Reference[]
       try {
-        refs = await client.listReferences()
+        refs = await client.listReferences(cmdOpts.project)
       } catch (err) {
         console.error(chalk.red((err as Error).message))
         process.exitCode = 1

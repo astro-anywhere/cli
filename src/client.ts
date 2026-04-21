@@ -435,8 +435,8 @@ export class AstroClient {
     return result.references ?? []
   }
 
-  async listReferences(): Promise<Reference[]> {
-    const result = await this.get<{ references: Reference[] }>('/api/references')
+  async listReferences(projectId?: string): Promise<Reference[]> {
+    const result = await this.get<{ references: Reference[] }>('/api/references', projectId ? { projectId } : {})
     return result.references ?? []
   }
 
@@ -453,10 +453,6 @@ export class AstroClient {
   }
 
   async importReferencesFromBibTeX(content: string): Promise<{ imported: number; updated: number }> {
-    // Parse locally and POST to /api/references/import
-    // We re-use the server's import endpoint which handles BibTeX on the client side
-    // Actually we send the raw BibTeX and let the store handle it — but server has no BibTeX parse
-    // Instead, we import by posting content as text to a dedicated endpoint
     const result = await this.request<{ imported: number; updated: number }>(
       'POST',
       '/api/references/import-bibtex',
