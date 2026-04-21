@@ -364,6 +364,66 @@ export function registerProjectCommands(program: Command): void {
       }
     })
 
+  // ── project notes <id> ───────────────────────────────────────────
+  project
+    .command('notes <id>')
+    .description('Get all task notes for a project as structured data')
+    .action(async (id: string) => {
+      const opts = program.opts()
+      const client = getClient(opts.serverUrl)
+
+      let p: Project
+      try {
+        p = await client.resolveProject(id)
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exitCode = 1
+        return
+      }
+
+      try {
+        const data = await client.getProjectNotes(p.id)
+
+        if (opts.json) {
+          print(data, { json: true })
+          return
+        }
+
+        // Markdown output suitable for agent consumption
+        const lines: string[] = []
+        lines.push(`# Project: ${data.project.name}`)
+        lines.push('')
+
+        if (data.project.description) {
+          lines.push('## Project Description')
+          lines.push('')
+          lines.push(data.project.description)
+          lines.push('')
+        }
+
+        for (const section of data.sections) {
+          const sectionTitle = section.milestone ? section.milestone.title : 'General'
+          lines.push(`## Section: ${sectionTitle}`)
+          lines.push('')
+
+          for (const task of section.tasks) {
+            lines.push(`### Task: ${task.title} [${task.status}]`)
+            lines.push('')
+            const noteText = task.content ?? task.description
+            if (noteText) {
+              lines.push(noteText)
+              lines.push('')
+            }
+          }
+        }
+
+        console.log(lines.join('\n'))
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exitCode = 1
+      }
+    })
+
   // ── project delete <id> ───────────────────────────────────────────
   project
     .command('delete <id>')
