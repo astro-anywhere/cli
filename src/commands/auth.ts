@@ -29,9 +29,10 @@ interface DeviceTokenError {
 
 function openUrl(url: string): void {
   const cmd = platform() === 'darwin' ? 'open' : 'xdg-open'
-  exec(`${cmd} ${JSON.stringify(url)}`, () => {
+  const child = exec(`${cmd} ${JSON.stringify(url)}`, () => {
     // Ignore errors (e.g., no browser available)
   })
+  child.unref()
 }
 
 function sleep(ms: number): Promise<void> {

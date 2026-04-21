@@ -428,7 +428,12 @@ export function registerPlanCommands(program: Command): void {
         nodes = result.nodes
         edges = result.edges
       } catch (err) {
-        console.error(chalk.red((err as Error).message))
+        const msg = (err as Error).message
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(msg))
+        }
         process.exitCode = 1
         return
       }

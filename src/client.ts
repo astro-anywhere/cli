@@ -452,11 +452,18 @@ export class AstroClient {
     return res.text()
   }
 
-  async importReferencesFromBibTeX(content: string): Promise<{ imported: number; updated: number }> {
+  async importReferencesFromBibTeX(
+    content: string,
+    options?: { projectId?: string; accept?: boolean },
+  ): Promise<{ imported: number; updated: number }> {
     const result = await this.request<{ imported: number; updated: number }>(
       'POST',
       '/api/references/import-bibtex',
-      { bibtex: content },
+      {
+        bibtex: content,
+        addedBy: options?.accept ? 'human' : 'ai',
+        ...(options?.projectId ? { projectId: options.projectId } : {}),
+      },
     )
     return result
   }

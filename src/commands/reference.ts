@@ -136,8 +136,10 @@ export function registerReferenceCommands(program: Command): void {
 
   ref
     .command('import <file>')
-    .description('Import references from a .bib file')
-    .action(async (file: string) => {
+    .description('Import references from a .bib file (goes to inbox by default; use --accept to add directly to library)')
+    .option('--project <id>', 'Associate import with a project (stored for review context)')
+    .option('--accept', 'Add directly to library, skipping the inbox')
+    .action(async (file: string, cmdOpts: { project?: string; accept?: boolean }) => {
       const client = getClient(program.opts().serverUrl)
 
       let content: string
@@ -151,15 +153,19 @@ export function registerReferenceCommands(program: Command): void {
 
       let result: { imported: number; updated: number }
       try {
-        result = await client.importReferencesFromBibTeX(content)
+        result = await client.importReferencesFromBibTeX(content, {
+          projectId: cmdOpts.project,
+          accept: cmdOpts.accept,
+        })
       } catch (err) {
         console.error(chalk.red((err as Error).message))
         process.exitCode = 1
         return
       }
 
+      const destination = cmdOpts.accept ? 'library' : 'inbox (pending review)'
       console.log(
-        chalk.green(`✓ Imported ${result.imported} new, updated ${result.updated} existing references`)
+        chalk.green(`✓ Imported ${result.imported} new, updated ${result.updated} existing references → ${destination}`)
       )
     })
 }
