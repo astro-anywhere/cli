@@ -1,4 +1,8 @@
+import { createRequire } from 'module'
 import { Command } from 'commander'
+
+const require = createRequire(import.meta.url)
+const { version } = require('../package.json') as { version: string }
 import { registerProjectCommands } from './commands/project.js'
 import { registerPlanCommands } from './commands/plan.js'
 import { registerTaskCommands } from './commands/task.js'
@@ -17,7 +21,7 @@ const program = new Command()
 program
   .name('astro-cli')
   .description('CLI for managing Astro projects, plans, tasks, and environments')
-  .version('0.2.0')
+  .version(version)
   .option('--json', 'Machine-readable JSON output')
   .option('--quiet', 'Suppress spinners and decorative output')
   .option('--server-url <url>', 'Override server URL')
