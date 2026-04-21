@@ -175,6 +175,24 @@ export interface ObservationStats {
   [key: string]: unknown
 }
 
+export interface Reference {
+  id: string
+  title: string
+  authors: string[]
+  year: number
+  venue?: string
+  doi?: string
+  url?: string
+  abstract?: string
+  entryType?: string
+  volume?: string
+  issue?: string
+  pages?: string
+  publisher?: string
+  source?: string
+  [key: string]: unknown
+}
+
 export interface SearchResults {
   projects: Project[]
   tasks: Array<PlanNode & { projectName?: string }>
@@ -304,6 +322,16 @@ export class AstroClient {
     return matches[0]
   }
 
+  async getProjectNotes(projectId: string): Promise<{
+    project: { id: string; name: string; description?: string; visionDoc?: string }
+    sections: Array<{
+      milestone?: { id: string; title: string }
+      tasks: Array<{ id: string; title: string; description?: string | null; content?: string | null; status: string }>
+    }>
+  }> {
+    return this.get(`/api/data/projects/${projectId}/notes`)
+  }
+
   // ── Plan ────────────────────────────────────────────────────────────
 
   async getPlan(projectId: string): Promise<{ nodes: PlanNode[]; edges: PlanEdge[] }> {
@@ -395,6 +423,46 @@ export class AstroClient {
 
   async search(query: string): Promise<SearchResults> {
     return this.get('/api/data/search', { q: query })
+  }
+
+  // ── References ──────────────────────────────────────────────────────
+
+  async searchReferences(query: string, projectId?: string): Promise<Reference[]> {
+    const result = await this.get<{ references: Reference[] }>('/api/references/search', {
+      q: query,
+      ...(projectId ? { projectId } : {}),
+    })
+    return result.references ?? []
+  }
+
+  async listReferences(): Promise<Reference[]> {
+    const result = await this.get<{ references: Reference[] }>('/api/references')
+    return result.references ?? []
+  }
+
+  async exportBibTeX(projectId?: string): Promise<string> {
+    const url = new URL('/api/references/export', this.baseUrl)
+    url.searchParams.set('format', 'bibtex')
+    if (projectId) url.searchParams.set('projectId', projectId)
+    const res = await fetch(url.toString(), { headers: this.headers })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`API error ${res.status}: ${text}`)
+    }
+    return res.text()
+  }
+
+  async importReferencesFromBibTeX(content: string): Promise<{ imported: number; updated: number }> {
+    // Parse locally and POST to /api/references/import
+    // We re-use the server's import endpoint which handles BibTeX on the client side
+    // Actually we send the raw BibTeX and let the store handle it — but server has no BibTeX parse
+    // Instead, we import by posting content as text to a dedicated endpoint
+    const result = await this.request<{ imported: number; updated: number }>(
+      'POST',
+      '/api/references/import-bibtex',
+      { bibtex: content },
+    )
+    return result
   }
 
   // ── Plan CRUD ─────────────────────────────────────────────────────
