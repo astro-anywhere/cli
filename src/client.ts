@@ -265,7 +265,20 @@ export class AstroClient {
     }
     if (!res.ok) {
       const text = await res.text()
-      throw new Error(`API error ${res.status}: ${text}`)
+      let message = text
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>
+        if (typeof parsed.error === 'string') message = parsed.error
+        else if (typeof parsed.message === 'string') message = parsed.message
+      } catch { /* not JSON, use raw text */ }
+      const hint =
+        res.status === 400 && /invalid.*id/i.test(message)
+          ? ' (pass a full UUID or a unique prefix — e.g. the first 8 chars)'
+          : res.status === 401 ? ' — run `astro-cli auth login` to re-authenticate'
+          : res.status === 403 ? ' — you do not have access to this resource'
+          : res.status === 404 ? ' — resource not found'
+          : ''
+      throw new Error(`${message}${hint}`)
     }
     return res.json() as Promise<T>
   }

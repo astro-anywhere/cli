@@ -177,6 +177,9 @@ export function registerPlanCommands(program: Command): void {
       const client = getClient(opts.serverUrl)
 
       try {
+        const resolvedProject = await client.resolveProject(cmdOpts.projectId)
+        const resolvedProjectId = resolvedProject.id
+
         let raw: string
         if (cmdOpts.file) {
           const { readFileSync } = await import('fs')
@@ -231,7 +234,7 @@ export function registerPlanCommands(program: Command): void {
 
         const planNodes = (nodes as Array<Record<string, unknown>>).map((node) => ({
           id: resolveId(String(node.id)),
-          projectId: cmdOpts.projectId,
+          projectId: resolvedProjectId,
           type: String(node.type || 'task'),
           title: String(node.title || ''),
           description: String(node.description || ''),
@@ -253,7 +256,7 @@ export function registerPlanCommands(program: Command): void {
         // Source/target are resolved so callers can use short node IDs here too.
         const planEdges: Array<Record<string, unknown>> = (inputEdges as Array<Record<string, unknown>>).map((edge) => ({
           id: edge.id ? resolveId(String(edge.id)) : randomUUID(),
-          projectId: cmdOpts.projectId,
+          projectId: resolvedProjectId,
           source: resolveId(String(edge.source)),
           target: resolveId(String(edge.target)),
           type: String(edge.type || 'dependency'),
@@ -265,7 +268,7 @@ export function registerPlanCommands(program: Command): void {
             for (const depId of deps) {
               planEdges.push({
                 id: randomUUID(),
-                projectId: cmdOpts.projectId,
+                projectId: resolvedProjectId,
                 source: resolveId(depId),
                 target: resolveId(String(node.id)),
                 type: 'dependency',
@@ -275,7 +278,7 @@ export function registerPlanCommands(program: Command): void {
         }
 
         const result = await client.setPlan(
-          cmdOpts.projectId,
+          resolvedProjectId,
           planNodes,
           planEdges,
           projectName,
@@ -287,7 +290,7 @@ export function registerPlanCommands(program: Command): void {
           print({
             ...result,
             ok: true,
-            projectId: cmdOpts.projectId,
+            projectId: resolvedProjectId,
             projectName,
             nodeCount: planNodes.length,
             edgeCount: planEdges.length,
@@ -326,7 +329,8 @@ export function registerPlanCommands(program: Command): void {
       const client = getClient(opts.serverUrl)
 
       try {
-        const { nodes } = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const { nodes } = await client.getPlan(project.id)
         print(nodes, { json: opts.json, columns: nodeColumns })
       } catch (err) {
         console.error(chalk.red((err as Error).message))
@@ -424,7 +428,8 @@ export function registerPlanCommands(program: Command): void {
 
       let nodes, edges
       try {
-        const result = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const result = await client.getPlan(project.id)
         nodes = result.nodes
         edges = result.edges
       } catch (err) {
@@ -506,6 +511,21 @@ export function registerPlanCommands(program: Command): void {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
+      let resolvedProjectId: string
+      try {
+        const project = await client.resolveProject(cmdOpts.projectId)
+        resolvedProjectId = project.id
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) {
+          print({ error: msg }, { json: true })
+        } else {
+          console.error(chalk.red(msg))
+        }
+        process.exitCode = 1
+        return
+      }
+
       // Generate a client ID
       const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -515,7 +535,7 @@ export function registerPlanCommands(program: Command): void {
         ...(cmdOpts.milestoneId ? [{ id: cmdOpts.milestoneId, role: '--milestone-id' }] : []),
       ]
       if (idsToValidate.length > 0) {
-        const validationError = await validateNodeIds(client, cmdOpts.projectId, idsToValidate, opts.json)
+        const validationError = await validateNodeIds(client, resolvedProjectId, idsToValidate, opts.json)
         if (validationError) {
           if (opts.json) {
             print({ error: validationError }, { json: true })
@@ -530,7 +550,7 @@ export function registerPlanCommands(program: Command): void {
       try {
         await client.createPlanNode({
           id,
-          projectId: cmdOpts.projectId,
+          projectId: resolvedProjectId,
           title: cmdOpts.title,
           type: cmdOpts.type,
           description: cmdOpts.description,
@@ -552,7 +572,7 @@ export function registerPlanCommands(program: Command): void {
           try {
             await client.createPlanEdge({
               id: edgeId,
-              projectId: cmdOpts.projectId,
+              projectId: resolvedProjectId,
               source: depId,
               target: id,
               type: 'dependency',
@@ -572,7 +592,7 @@ export function registerPlanCommands(program: Command): void {
         }
 
         if (opts.json) {
-          print({ ok: true, id, projectId: cmdOpts.projectId, title: cmdOpts.title, edgesAdded }, { json: true })
+          print({ ok: true, id, projectId: resolvedProjectId, title: cmdOpts.title, edgesAdded }, { json: true })
         } else {
           console.log(chalk.green('Node created:'))
           console.log(`  ${chalk.bold('ID')}     ${id}`)
@@ -810,10 +830,21 @@ export function registerPlanCommands(program: Command): void {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
+      let resolvedProjectId: string
+      try {
+        const project = await client.resolveProject(cmdOpts.projectId)
+        resolvedProjectId = project.id
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) { print({ error: msg }, { json: true }) } else { console.error(chalk.red(msg)) }
+        process.exitCode = 1
+        return
+      }
+
       const id = `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
       // Validate source and target exist before creating
-      const validationError = await validateNodeIds(client, cmdOpts.projectId, [
+      const validationError = await validateNodeIds(client, resolvedProjectId, [
         { id: cmdOpts.source, role: '--source' },
         { id: cmdOpts.target, role: '--target' },
       ], opts.json)
@@ -828,7 +859,7 @@ export function registerPlanCommands(program: Command): void {
       }
 
       try {
-        const result = await client.createPlanEdge({ id, projectId: cmdOpts.projectId, source: cmdOpts.source, target: cmdOpts.target, type: cmdOpts.type })
+        const result = await client.createPlanEdge({ id, projectId: resolvedProjectId, source: cmdOpts.source, target: cmdOpts.target, type: cmdOpts.type })
 
         if (opts.json) {
           print({ ...result, id, source: cmdOpts.source, target: cmdOpts.target }, { json: true })
@@ -858,7 +889,8 @@ export function registerPlanCommands(program: Command): void {
       const client = getClient(opts.serverUrl)
 
       try {
-        const { edges } = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const { edges } = await client.getPlan(project.id)
         const edge = edges.find((e: { source: string; target: string }) => e.source === cmdOpts.source && e.target === cmdOpts.target)
 
         if (!edge) {
@@ -909,12 +941,23 @@ export function registerPlanCommands(program: Command): void {
       const opts = program.opts()
       const client = getClient(opts.serverUrl)
 
+      let resolvedProjectId: string
+      try {
+        const project = await client.resolveProject(cmdOpts.projectId)
+        resolvedProjectId = project.id
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (opts.json) { print({ error: msg }, { json: true }) } else { console.error(chalk.red(msg)) }
+        process.exitCode = 1
+        return
+      }
+
       // Validate all referenced node IDs before creating anything
       const idsToValidate = [
         { id: cmdOpts.milestoneId, role: '--milestone-id' },
         ...cmdOpts.dependsOn.map(d => ({ id: d, role: '--depends-on' })),
       ]
-      const validationError = await validateNodeIds(client, cmdOpts.projectId, idsToValidate, opts.json)
+      const validationError = await validateNodeIds(client, resolvedProjectId, idsToValidate, opts.json)
       if (validationError) {
         if (opts.json) {
           print({ error: validationError }, { json: true })
@@ -960,7 +1003,7 @@ export function registerPlanCommands(program: Command): void {
       try {
         await client.createPlanNode({
           id,
-          projectId: cmdOpts.projectId,
+          projectId: resolvedProjectId,
           title: 'Create PR and run code review',
           type: 'task',
           description,
@@ -982,7 +1025,7 @@ export function registerPlanCommands(program: Command): void {
         for (const depId of cmdOpts.dependsOn) {
           const edgeId = `edge-${randomUUID()}`
           try {
-            await client.createPlanEdge({ id: edgeId, projectId: cmdOpts.projectId, source: depId, target: id, type: 'dependency' })
+            await client.createPlanEdge({ id: edgeId, projectId: resolvedProjectId, source: depId, target: id, type: 'dependency' })
             edgesAdded.push(depId)
           } catch (edgeErr) {
             const edgeMsg = edgeErr instanceof Error ? edgeErr.message : String(edgeErr)
@@ -1025,7 +1068,8 @@ export function registerPlanCommands(program: Command): void {
       const client = getClient(opts.serverUrl)
 
       try {
-        const { nodes, edges } = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const { nodes, edges } = await client.getPlan(project.id)
         const active = nodes.filter(n => !n.deletedAt)
 
         // Status counts
@@ -1089,7 +1133,8 @@ export function registerPlanCommands(program: Command): void {
 
       let nodes, edges
       try {
-        const result = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const result = await client.getPlan(project.id)
         nodes = result.nodes.filter(n => !n.deletedAt)
         edges = result.edges
       } catch (err) {
@@ -1161,9 +1206,10 @@ export function registerPlanCommands(program: Command): void {
       console.log()
 
       try {
+        const project = await client.resolveProject(cmdOpts.projectId)
         const response = await client.dispatchTask({
-          nodeId: `plan-${cmdOpts.projectId}`,
-          projectId: cmdOpts.projectId,
+          nodeId: `plan-${project.id}`,
+          projectId: project.id,
           title: `Interactive planning: ${cmdOpts.description.slice(0, 80)}`,
           isInteractivePlan: true,
           description: cmdOpts.description,
@@ -1208,7 +1254,8 @@ export function registerPlanCommands(program: Command): void {
       }
 
       try {
-        const { nodes: allNodes, edges } = await client.getPlan(cmdOpts.projectId)
+        const project = await client.resolveProject(cmdOpts.projectId)
+        const { nodes: allNodes, edges } = await client.getPlan(project.id)
         const nodes = allNodes.filter(n => !n.deletedAt)
         const nodeMap = new Map(nodes.map(n => [n.id, n]))
         const violations: Violation[] = []
