@@ -14,6 +14,22 @@ const nodeColumns: ColumnDef[] = [
   { key: 'endDate', label: 'END', width: 12, format: (v) => v ? String(v) : chalk.dim('\u2014') },
 ]
 
+// ── Enum validation ───────────────────────────────────────────────────
+
+const VALID_PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'] as const
+const VALID_ESTIMATES = ['XS', 'S', 'M', 'L', 'XL'] as const
+const VALID_VERIFICATIONS = ['auto', 'human'] as const
+const VALID_STATUSES = ['planned', 'dispatched', 'in_progress', 'auto_verified', 'awaiting_approval', 'awaiting_judgment', 'completed', 'pruned'] as const
+const VALID_TYPES = ['task', 'milestone', 'decision', 'loop'] as const
+
+function validateEnum(value: string | undefined, field: string, allowed: readonly string[]): string | null {
+  if (value === undefined) return null
+  if (!allowed.includes(value)) {
+    return `Invalid ${field} "${value}". Allowed values: ${allowed.join(', ')}`
+  }
+  return null
+}
+
 // ── Tree rendering helpers ────────────────────────────────────────────
 
 interface TreeNode {
@@ -480,11 +496,11 @@ export function registerPlanCommands(program: Command): void {
     .allowUnknownOption()
     .requiredOption('--project-id <id>', 'Project ID')
     .requiredOption('--title <title>', 'Node title')
-    .option('--type <type>', 'Node type: task, milestone, decision', 'task')
+    .option('--type <type>', 'Node type: task, milestone, decision, loop', 'task')
     .option('--description <desc>', 'Node description')
     .option('--status <status>', 'Initial status', 'planned')
     .option('--parent-id <id>', 'Parent node ID')
-    .option('--priority <priority>', 'Priority: critical, high, normal, low')
+    .option('--priority <priority>', 'Priority: urgent, high, medium, low, none')
     .option('--milestone-id <id>', 'Milestone node ID to link this task to')
     .option('--dependency <nodeId>', 'Dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
     .option('--estimate <size>', 'Estimate: XS | S | M | L | XL')
@@ -528,6 +544,21 @@ export function registerPlanCommands(program: Command): void {
 
       // Generate a client ID
       const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+      // Validate enum fields client-side before hitting the server
+      const enumErrors = [
+        validateEnum(cmdOpts.priority, '--priority', VALID_PRIORITIES),
+        validateEnum(cmdOpts.estimate, '--estimate', VALID_ESTIMATES),
+        validateEnum(cmdOpts.verification, '--verification', VALID_VERIFICATIONS),
+        validateEnum(cmdOpts.status, '--status', VALID_STATUSES),
+        validateEnum(cmdOpts.type, '--type', VALID_TYPES),
+      ].filter(Boolean)
+      if (enumErrors.length > 0) {
+        const msg = enumErrors.join('\n')
+        if (opts.json) { print({ error: msg }, { json: true }) } else { console.error(chalk.red(msg)) }
+        process.exitCode = 1
+        return
+      }
 
       // Validate referenced IDs before submitting
       const idsToValidate = [
@@ -620,8 +651,8 @@ export function registerPlanCommands(program: Command): void {
     .option('--title <title>', 'New title')
     .option('--status <status>', 'New status')
     .option('--description <desc>', 'New description')
-    .option('--priority <priority>', 'New priority: critical, high, normal, low')
-    .option('--type <type>', 'New type: task, milestone, decision')
+    .option('--priority <priority>', 'New priority: urgent, high, medium, low, none')
+    .option('--type <type>', 'New type: task, milestone, decision, loop')
     .option('--milestone-id <id>', 'Milestone node ID')
     .option('--add-dependency <nodeId>', 'Add a dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
     .option('--remove-dependency <nodeId>', 'Remove a dependency node ID (repeatable)', (val: string, acc: string[]) => { acc.push(val); return acc }, [] as string[])
@@ -652,6 +683,21 @@ export function registerPlanCommands(program: Command): void {
       let dependenciesToAdd: string[] = []
       let dependenciesToRemove: string[] = []
       let dependencyProjectId: string | null = null
+      // Validate enum fields before building patch
+      const enumErrors = [
+        validateEnum(cmdOpts.priority, '--priority', VALID_PRIORITIES),
+        validateEnum(cmdOpts.estimate, '--estimate', VALID_ESTIMATES),
+        validateEnum(cmdOpts.verification, '--verification', VALID_VERIFICATIONS),
+        validateEnum(cmdOpts.status, '--status', VALID_STATUSES),
+        validateEnum(cmdOpts.type, '--type', VALID_TYPES),
+      ].filter(Boolean)
+      if (enumErrors.length > 0) {
+        const msg = enumErrors.join('\n')
+        if (opts.json) { print({ error: msg }, { json: true }) } else { console.error(chalk.red(msg)) }
+        process.exitCode = 1
+        return
+      }
+
       if (cmdOpts.title !== undefined) patch.title = cmdOpts.title
       if (cmdOpts.status !== undefined) patch.status = cmdOpts.status
       if (cmdOpts.description !== undefined) patch.description = cmdOpts.description
