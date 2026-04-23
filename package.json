@@ -24,6 +24,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "build:binary": "tsup src/index.ts --format cjs --no-splitting --out-dir dist-bundle && pkg dist-bundle/index.cjs --target node22-linux-x64 --output dist/astro-cli-linux-x64 --compress GZip",
     "watch": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.5",
+    "@yao-pkg/pkg": "^5.12.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.0.18"

@@ -27,7 +27,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release
-        run: gh release create "${{ github.ref_name }}" --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build standalone Linux x64 binary
+        run: npm run build:binary
+
+      - name: Create GitHub Release with binary
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/astro-cli-linux-x64
