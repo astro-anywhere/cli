@@ -15,6 +15,7 @@ import { registerAuthCommands } from './commands/auth.js'
 import { registerCompletionCommands } from './commands/completion.js'
 import { registerPlaygroundCommands } from './commands/playground.js'
 import { registerReferenceCommands } from './commands/reference.js'
+import { assertHipaaPinning } from './hipaa-pin.js'
 
 const program = new Command()
 
@@ -47,4 +48,15 @@ program
     await launchTui(program.opts().serverUrl)
   })
 
-program.parse()
+// HIPAA pinning: verify the CLI's host-level HIPAA intent matches what the
+// configured server reports at /api/config. Runs before the command action so
+// a mismatch aborts before any API call is attempted.
+program.hook('preAction', async (thisCommand) => {
+  const opts = thisCommand.optsWithGlobals() as { serverUrl?: string }
+  await assertHipaaPinning(opts.serverUrl)
+})
+
+program.parseAsync().catch((err) => {
+  console.error(err instanceof Error ? err.message : String(err))
+  process.exit(1)
+})
